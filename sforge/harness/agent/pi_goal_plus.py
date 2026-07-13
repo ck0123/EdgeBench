@@ -24,7 +24,7 @@ from sforge.harness.agent.pi import PiAgent
 from sforge.harness.backend import ContainerBackend, ContainerHandle
 
 
-GOAL_PLUS_COMMIT = "3f97cf3ea44096ead375e4cb7238c6ef007fb4ab"
+GOAL_PLUS_REPOSITORY = "https://github.com/ck0123/goal-plus.git"
 GOAL_PLUS_CONTAINER_DIR = "/opt/goal-plus"
 GOAL_PLUS_STATE_DIR = "/home/agent/.goal-plus"
 PYTHON_CONTAINER_DIR = "/opt/sforge-python"
@@ -36,14 +36,14 @@ class PiGoalPlusAgent(PiAgent):
     name = "pi-goal-plus"
     install_cmds = [
         *PiAgent.install_cmds,
-        f'''if [ ! -f {GOAL_PLUS_CONTAINER_DIR}/pyproject.toml ]; then
-    TMP=$(mktemp -d)
-    curl -fsSL "https://github.com/ck0123/goal-plus/archive/{GOAL_PLUS_COMMIT}.tar.gz" \
-      | tar -xz -C "$TMP"
-    sudo mkdir -p {GOAL_PLUS_CONTAINER_DIR}
-    sudo cp -a "$TMP"/goal-plus-{GOAL_PLUS_COMMIT}/. {GOAL_PLUS_CONTAINER_DIR}/
-    rm -rf "$TMP"
-fi''',
+        f'''set -euo pipefail
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+git clone --depth 1 --branch main {GOAL_PLUS_REPOSITORY} "$TMP/goal-plus"
+sudo rm -rf {GOAL_PLUS_CONTAINER_DIR}
+sudo mkdir -p {GOAL_PLUS_CONTAINER_DIR}
+sudo cp -a "$TMP/goal-plus/." {GOAL_PLUS_CONTAINER_DIR}/
+echo "Goal Plus main commit: $(git -C {GOAL_PLUS_CONTAINER_DIR} rev-parse HEAD)"''',
         r'''PYTHON=""
 for CANDIDATE in \
     /opt/sforge-python/bin/python3.11 \
@@ -130,21 +130,6 @@ mkdir -p /home/agent/.goal-plus''',
         logger: logging.Logger,
     ) -> None:
         super().prepare_container(backend, handle, logger)
-
-        source = os.environ.get("SFORGE_GOAL_PLUS_SOURCE_DIR")
-        if not source:
-            logger.info("Goal Plus source not configured; install will download pinned commit")
-        else:
-            source_path = Path(source).expanduser().resolve()
-            if not (source_path / "pyproject.toml").is_file():
-                raise RuntimeError(
-                    "SFORGE_GOAL_PLUS_SOURCE_DIR is not a Goal Plus checkout: "
-                    f"{source_path}"
-                )
-            backend.copy_to_container(
-                handle, source_path, PurePosixPath(GOAL_PLUS_CONTAINER_DIR)
-            )
-            logger.info("Copied Goal Plus source from %s", source_path)
 
         python_source = os.environ.get("SFORGE_GOAL_PLUS_PYTHON_DIR")
         if not python_source:

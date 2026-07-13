@@ -27,7 +27,7 @@ title: "Pi + Goal Plus 夜间顺序运行配置"
 | C++ task 的 Python | 清华 Ubuntu 镜像提供 Python 3.10 |
 | Python task 的 Python | 复用 work image 自带版本 |
 | Python 包 | 清华 PyPI 镜像 |
-| Goal Plus 来源 | 固定 commit `3f97cf3ea44096ead375e4cb7238c6ef007fb4ab` |
+| Goal Plus 来源 | 每个新 worker 容器启动时 shallow clone 上游 `main` |
 
 执行顺序如下：
 
@@ -58,8 +58,9 @@ SForge 在容器创建后把该文件复制为 `/home/agent/.pi/agent/auth.json`
 export SFORGE_PI_AUTH_FILE="$HOME/.pi/agent/auth.json"
 ```
 
-Goal Plus 不从宿主机 checkout 复制。每个新 work container 都下载上表中的固定
-commit。Node.js 和 Pi 仍随新容器安装，但默认从 npmmirror 下载。没有 Python 3.10
+Goal Plus 不从宿主机 checkout 复制。每个新 work container 都 shallow clone 上游
+`main`，并在安装日志中记录实际解析出的 commit SHA。Node.js 和 Pi 仍随新容器安装，
+但默认从 npmmirror 下载。没有 Python 3.10
 的 Ubuntu 22.04 C++ work image 通过清华 Ubuntu 镜像安装系统 Python；Python task
 直接使用镜像内版本。两条路径都不会经过 `uv` 下载 GitHub Release，Python 包使用
 清华 PyPI。Docker task 镜像本身不会重复下载。

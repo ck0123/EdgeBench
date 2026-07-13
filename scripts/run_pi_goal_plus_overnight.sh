@@ -25,7 +25,7 @@ Environment overrides:
 
 The script adapts a localhost HTTP(S) proxy to host.docker.internal for work
 containers. Node.js and npm default to npmmirror. Goal Plus is downloaded from
-the pinned upstream revision; host Goal Plus checkouts are not copied.
+the latest upstream main branch; host Goal Plus checkouts are not copied.
 EOF
 }
 
@@ -88,9 +88,10 @@ fi
 export SFORGE_NODEJS_MIRROR_URL="${SFORGE_NODEJS_MIRROR_URL:-https://npmmirror.com/mirrors/node}"
 export SFORGE_NPM_REGISTRY_URL="${SFORGE_NPM_REGISTRY_URL:-https://registry.npmmirror.com}"
 
-# Always download the pinned Goal Plus checkout. C++ images install Python 3.10
-# from the configured Ubuntu mirror; Python images reuse their bundled runtime.
-unset SFORGE_GOAL_PLUS_SOURCE_DIR SFORGE_GOAL_PLUS_PYTHON_DIR
+# Goal Plus is cloned from upstream main by the agent installer. C++ images
+# install Python 3.10 from the configured Ubuntu mirror; Python images reuse
+# their bundled runtime.
+unset SFORGE_GOAL_PLUS_PYTHON_DIR
 
 model="${MODEL:-gpt-5.5}"
 timeout_seconds="${TIMEOUT_SECONDS:-7200}"

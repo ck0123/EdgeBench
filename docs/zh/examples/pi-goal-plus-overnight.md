@@ -22,6 +22,7 @@ title: "Pi + Goal Plus 夜间顺序运行配置"
 | Judge CPU 上限 | `2` |
 | Auto eval | 每 `300` 秒 |
 | Auto resume | 开启；与普通 Pi 一样通过 `pi -c` 和 `Continue working.` 延续 session |
+| Stop gate | Goal Plus Pi extension 的原生 `agent_end` hook |
 | 容器网络 | 开启 |
 | Node.js / npm | npmmirror |
 | C++ task 的 Python | 清华 Ubuntu 镜像提供 Python 3.10 |

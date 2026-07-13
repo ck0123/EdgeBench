@@ -34,6 +34,9 @@ class PiGoalPlusAgent(PiAgent):
     """Run the normal EdgeBench prompt through Pi's ``/goal-plus`` entrypoint."""
 
     name = "pi-goal-plus"
+    # Goal Plus registers its stop gate through Pi's native ``agent_end`` event
+    # in the extension loaded by run_cmd/resume_cmd.
+    stop_hook = "pi-native-goal-plus"
     install_cmds = [
         *PiAgent.install_cmds,
         f'''set -euo pipefail
@@ -115,8 +118,8 @@ mkdir -p /home/agent/.goal-plus''',
         '--provider openai-codex --model "$PI_MODEL" '
         '"Continue working. Use the Goal Plus framework to continue deep search '
         'optimization for this task. The total exploration time budget is '
-        '${{SFORGE_AGENT_TOTAL_BUDGET_SECONDS}} seconds; the hard deadline is Unix '
-        'timestamp ${{SFORGE_AGENT_DEADLINE}}, and ${{REMAINING}} seconds remain now. '
+        '${SFORGE_AGENT_TOTAL_BUDGET_SECONDS} seconds; the hard deadline is Unix '
+        'timestamp ${SFORGE_AGENT_DEADLINE}, and ${REMAINING} seconds remain now. '
         'If the initial SearchSpec has not been frozen yet, set '
         'budget.max_candidates to 15 and budget.max_parallel to 3. '
         'Use the current remaining time to choose the next search work yourself; '
@@ -149,6 +152,18 @@ mkdir -p /home/agent/.goal-plus''',
             handle, python_path, PurePosixPath(PYTHON_CONTAINER_DIR)
         )
         logger.info("Copied portable Python from %s", python_path)
+
+    def install_stop_hook(
+        self,
+        backend: ContainerBackend,
+        handle: ContainerHandle,
+        log_dir: Path,
+        logger: logging.Logger,
+    ) -> None:
+        """Report the stop gate supplied by the loaded Goal Plus Pi extension."""
+        logger.info(
+            "Goal Plus stop gate is provided by the Pi extension's native agent_end hook"
+        )
 
     def augment_env(self, env: dict[str, str], model: str | None) -> None:
         super().augment_env(env, model)

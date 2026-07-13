@@ -97,6 +97,8 @@ mkdir -p /home/agent/.goal-plus''',
         '--provider openai-codex --model "$PI_MODEL" '
         '"/goal-plus $(cat {prompt_file})\n\n'
         'Use the Goal Plus framework to perform deep search optimization for this task.\n'
+        'For the initial frozen SearchSpec, set budget.max_candidates to 15 and '
+        'budget.max_parallel to 3.\n'
         'The total exploration time budget for this task is '
         '${{SFORGE_AGENT_TOTAL_BUDGET_SECONDS}} seconds. The hard deadline is Unix '
         'timestamp ${{SFORGE_AGENT_DEADLINE}}, and ${{REMAINING}} seconds remain at '
@@ -115,6 +117,8 @@ mkdir -p /home/agent/.goal-plus''',
         'optimization for this task. The total exploration time budget is '
         '${{SFORGE_AGENT_TOTAL_BUDGET_SECONDS}} seconds; the hard deadline is Unix '
         'timestamp ${{SFORGE_AGENT_DEADLINE}}, and ${{REMAINING}} seconds remain now. '
+        'If the initial SearchSpec has not been frozen yet, set '
+        'budget.max_candidates to 15 and budget.max_parallel to 3. '
         'Use the current remaining time to choose the next search work yourself; '
         'no round count is prescribed."'
     )

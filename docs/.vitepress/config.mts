@@ -106,6 +106,8 @@ export default defineConfig({
               items: [
                 { text: '单任务运行 (Docker)', link: '/zh/examples/single-task-docker' },
                 { text: '全部任务 (Kubernetes)', link: '/zh/examples/all-tasks-k8s' },
+                { text: 'Goal Plus 本地 Smoke Tasks', link: '/zh/examples/goal-plus-local-smoke' },
+                { text: 'Pi + Goal Plus 夜间顺序运行', link: '/zh/examples/pi-goal-plus-overnight' },
               ],
             },
             {

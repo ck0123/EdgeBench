@@ -50,17 +50,20 @@ docker info --format 'Architecture={{.Architecture}} DockerRootDir={{.DockerRoot
 
 ## 短预算验证
 
-API key 应只通过 shell 环境或 secret manager 注入，不要写进脚本、配置或本文档。
+`pi-goal-plus` 使用 Pi 自己的 OpenAI Codex 登录。先在宿主机完成 Pi 登录，确认
+`~/.pi/agent/auth.json` 中存在 `openai-codex` 项。这个文件只在运行时复制到工作
+容器，不要提交到仓库，也不要把 token 或 account ID 写进脚本、配置或文档。
 
 ```bash
-export SFORGE_AGENT_API_KEY="<set-outside-the-repository>"
-
 python3 -m sforge.cli run \
   --task vliw_kernel_optimization \
   --agent pi-goal-plus \
-  --model <model> \
+  --model gpt-5.5 \
   --timeout 600 \
+  --enable-internet \
   --run-id vliw-pi-goal-plus-smoke
 ```
 
 建议先用 10–30 分钟验证安装、verifier、提交循环和日志，再增加预算。
+
+6 个 task 的顺序长跑配置见 [Pi + Goal Plus 夜间顺序运行配置](./pi-goal-plus-overnight.md)。

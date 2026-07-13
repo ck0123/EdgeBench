@@ -48,12 +48,33 @@ class PiGoalPlusAgent(PiAgent):
     sudo cp -a "$TMP"/goal-plus-{GOAL_PLUS_COMMIT}/. {GOAL_PLUS_CONTAINER_DIR}/
     rm -rf "$TMP"
 fi''',
-        r'''if [ -x /opt/sforge-python/bin/python3.11 ]; then
-    PYTHON=/opt/sforge-python/bin/python3.11
+        r'''PYTHON=""
+for CANDIDATE in \
+    /opt/sforge-python/bin/python3.11 \
+    /opt/sforge-python/bin/python3.10 \
+    /opt/sforge-python/bin/python3; do
+    if [ -x "$CANDIDATE" ] && "$CANDIDATE" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then
+        PYTHON="$CANDIDATE"
+        break
+    fi
+done
+if [ -n "$PYTHON" ]; then
+    :
 elif command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then
     PYTHON=$(command -v python3)
 elif command -v python >/dev/null 2>&1 && python -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then
     PYTHON=$(command -v python)
+elif command -v apt-get >/dev/null 2>&1; then
+    if [ -f /etc/apt/sources.list ]; then
+        sudo sed -i \
+          -e 's|http://archive.ubuntu.com/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
+          -e 's|http://security.ubuntu.com/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
+          /etc/apt/sources.list
+    fi
+    sudo -E apt-get update
+    sudo -E env DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-pip
+    PYTHON=$(command -v python3)
+    "$PYTHON" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'
 else
     curl -fsSL https://astral.sh/uv/0.8.22/install.sh -o /tmp/install-uv.sh
     sudo env UV_INSTALL_DIR=/usr/local/bin sh /tmp/install-uv.sh
@@ -76,7 +97,7 @@ mkdir -p /home/agent/.goal-plus''',
     run_cmd = (
         'pi -p --mode json '
         '-e /opt/goal-plus/.pi/extensions/goal-plus.ts '
-        '--provider sforge-proxy --model "$PI_MODEL" '
+        '--provider openai-codex --model "$PI_MODEL" '
         '"/goal-plus $(cat {prompt_file})\n\n'
         'SForge benchmark integration constraints:\n'
         '- Paths listed under Submitted Files are mutable candidate artifacts. '
@@ -116,7 +137,7 @@ fi
 sforge-submit --details || true
 pi -p --mode json \
   -e /opt/goal-plus/.pi/extensions/goal-plus.ts \
-  --provider sforge-proxy --model "$PI_MODEL" \
+  --provider openai-codex --model "$PI_MODEL" \
   "/goal-plus Continue the same SForge benchmark from the current promoted files as a new optimization cycle.
 
 First run sforge-submit --list and inspect the formal Judge history. Do not call sforge-submit without --list; the outer controller owns formal submissions. Improve on the current best solution rather than restarting from the original trivial baseline. Use Goal Plus Search Mode with local task verifiers for candidate ranking, promote the best locally verified candidate into the submitted workspace, and finish this cycle promptly so the outer controller can judge it and start another cycle.
@@ -129,6 +150,8 @@ The benchmark hard deadline is Unix timestamp $(cat /opt/sforge-agent-deadline).
         handle: ContainerHandle,
         logger: logging.Logger,
     ) -> None:
+        super().prepare_container(backend, handle, logger)
+
         source = os.environ.get("SFORGE_GOAL_PLUS_SOURCE_DIR")
         if not source:
             logger.info("Goal Plus source not configured; install will download pinned commit")
@@ -148,9 +171,14 @@ The benchmark hard deadline is Unix timestamp $(cat /opt/sforge-agent-deadline).
         if not python_source:
             return
         python_path = Path(python_source).expanduser().resolve()
-        if not (python_path / "bin" / "python3.11").is_file():
+        python_candidates = tuple(
+            python_path / "bin" / name
+            for name in ("python3.11", "python3.10", "python3")
+        )
+        if not any(candidate.is_file() for candidate in python_candidates):
             raise RuntimeError(
-                "SFORGE_GOAL_PLUS_PYTHON_DIR does not contain bin/python3.11: "
+                "SFORGE_GOAL_PLUS_PYTHON_DIR does not contain a supported "
+                "Python 3.10+ executable under bin/: "
                 f"{python_path}"
             )
         backend.copy_to_container(
@@ -164,7 +192,7 @@ The benchmark hard deadline is Unix timestamp $(cat /opt/sforge-agent-deadline).
         env["GOAL_PLUS_ROOT"] = GOAL_PLUS_STATE_DIR
         env["GOAL_PLUS_PI_ROLE"] = "main"
         if model:
-            env["GOAL_PLUS_PI_MODEL"] = f"sforge-proxy/{model}"
+            env["GOAL_PLUS_PI_MODEL"] = f"openai-codex/{model}"
 
     def collect_artifacts(
         self,

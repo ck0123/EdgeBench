@@ -16,7 +16,13 @@
 
 from __future__ import annotations
 
+import json
+import logging
+import os
+from pathlib import Path, PurePosixPath
+
 from sforge.harness.agent.base import Agent
+from sforge.harness.backend import ContainerBackend, ContainerHandle
 
 
 class PiAgent(Agent):
@@ -54,16 +60,17 @@ EOF
 chmod 600 ~/.pi/agent/models.json''',
     ]
     run_cmd = (
-        'pi -p --mode json --provider sforge-proxy --model "$PI_MODEL" '
+        'pi -p --mode json --provider openai-codex --model "$PI_MODEL" '
         '"$(cat {prompt_file})"'
     )
     resume_cmd = (
-        'pi -p --mode json -c --provider sforge-proxy --model "$PI_MODEL" '
+        'pi -p --mode json -c --provider openai-codex --model "$PI_MODEL" '
         '"Continue working."'
     )
     api_key_env = "OPENAI_API_KEY"
     api_base_env = "OPENAI_BASE_URL"
-    default_api_base_url = "https://api.openai.com/v1"
+    # Pi's built-in openai-codex provider talks to the ChatGPT Codex backend.
+    default_api_base_url = "https://chatgpt.com/backend-api"
     model_env = "PI_MODEL"
 
     def augment_env(self, env: dict[str, str], model: str | None) -> None:
@@ -71,3 +78,43 @@ chmod 600 ~/.pi/agent/models.json''',
         env["PI_CODING_AGENT_SESSION_DIR"] = "/home/agent/.pi/agent/sessions"
         env["PI_SKIP_VERSION_CHECK"] = "1"
         env["PI_TELEMETRY"] = "0"
+
+    def prepare_container(
+        self,
+        backend: ContainerBackend,
+        handle: ContainerHandle,
+        logger: logging.Logger,
+    ) -> None:
+        auth_source = Path(
+            os.environ.get(
+                "SFORGE_PI_AUTH_FILE",
+                Path.home() / ".pi" / "agent" / "auth.json",
+            )
+        ).expanduser().resolve()
+        if not auth_source.is_file():
+            raise RuntimeError(
+                "Pi auth file not found; run `pi` and log in first, or set "
+                f"SFORGE_PI_AUTH_FILE (looked for {auth_source})"
+            )
+
+        try:
+            auth = json.loads(auth_source.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError(f"Invalid Pi auth file: {auth_source}") from exc
+        if not isinstance(auth.get("openai-codex"), dict):
+            raise RuntimeError(
+                f"Pi auth file has no openai-codex login: {auth_source}"
+            )
+
+        backend.copy_to_container(
+            handle,
+            auth_source,
+            PurePosixPath("/home/agent/.pi/agent/auth.json"),
+        )
+        backend.exec_run(
+            handle,
+            "chown -R agent:agent /home/agent/.pi && "
+            "chmod 600 /home/agent/.pi/agent/auth.json",
+            user="root",
+        )
+        logger.info("Copied host Pi openai-codex login into the work container")

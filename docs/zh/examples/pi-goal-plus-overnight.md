@@ -21,7 +21,7 @@ title: "Pi + Goal Plus 夜间顺序运行配置"
 | Work CPU 上限 | `3` |
 | Judge CPU 上限 | `2` |
 | Auto eval | 每 `300` 秒 |
-| Auto resume | 开启；沿用同一个 Pi session 和同一条 Goal Plus record，不创建短 cycle |
+| Auto resume | 开启；与普通 Pi 一样通过 `pi -c` 和 `Continue working.` 延续 session |
 | 容器网络 | 开启 |
 | Node.js / npm | npmmirror |
 | C++ task 的 Python | 清华 Ubuntu 镜像提供 Python 3.10 |
@@ -64,21 +64,19 @@ commit。Node.js 和 Pi 仍随新容器安装，但默认从 npmmirror 下载。
 直接使用镜像内版本。两条路径都不会经过 `uv` 下载 GitHub Release，Python 包使用
 清华 PyPI。Docker task 镜像本身不会重复下载。
 
-SForge 的普通 Codex agent 使用 `codex exec resume --last` 延续最近会话；这里的 Pi
-采用等价的 `pi -c`。一条 Goal Plus record 代表整个 EdgeBench task，而不是一次快速
-候选批次。它应在同一 record 内运行多个 planning round；一个 search run 的预算耗尽
-后，如果离硬截止时间仍远，可以先提升 winner，再在同一 `goal_plus_id` 下创建新的
-search run 继续深度优化。
+Codex agent 会把 SForge 生成的 EdgeBench prompt 原样交给 `codex exec`；普通 Pi 也会
+原样交给 `pi`。`pi-goal-plus` 保持同一份原始 prompt，只通过 `/goal-plus` 入口加载
+Goal Plus，并在 prompt 末尾追加一句：
 
-正式长跑不得使用 smoke-test 式的 `max_candidates == max_parallel` 单轮配置。当剩余
-时间超过 30 分钟时，冻结的预算必须至少容纳三个顺序 planning round，后续 round 要
-基于前面 verifier 通过的最佳候选继续派生或有依据地挑战它。Pi 不能因为一个 batch、
-一个 round 或一个 search run 完成就把 Goal Plus 标为完成；最终一段时间才用于选择、
-提升和审计。
+```text
+Use the Goal Plus framework to perform deep search optimization for this task.
+```
 
-若 Pi 在硬截止时间前意外退出，auto resume 会继续同一个 session 和同一条 Goal Plus
-record，不会先提交再新建短 cycle。SForge 不使用固定的 20 分钟 segment timeout
-切断尚未完成的 record；仅有单 task 的全局 `7200` 秒时限会结束 agent。
+这里不额外规定 round 数、candidate 数、并行数或按剩余时间划分的阈值；具体 SearchSpec
+和搜索深度由 Goal Plus 根据原任务自行判断。若 Pi 提前退出，auto resume 与普通 Pi
+一致，通过同一个 session 执行 `Continue working.`，并继续强调使用 Goal Plus 做深度
+搜索。SForge 不使用固定的 20 分钟 segment timeout；只有单 task 的全局 `7200` 秒
+时限会结束 agent。
 
 ---
 

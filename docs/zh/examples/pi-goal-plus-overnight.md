@@ -119,8 +119,14 @@ caffeinate -dimsu ./scripts/run_pi_goal_plus_overnight.sh --start-at 23:00
 Copied host Pi openai-codex login into the work container
 Goal Plus source not configured; install will download pinned commit
 Agent installation complete
+Agent deadline installed: <unix-timestamp>
 Running agent: ... --provider openai-codex --model "$PI_MODEL" ...
 ```
+
+deadline 由宿主计算后通过容器 shell 写入
+`/opt/sforge-agent-deadline`，SForge 会立即回读校验，并同时通过
+`SFORGE_AGENT_DEADLINE` 环境变量提供后备值。续跑日志会记录时间戳和剩余秒数；文件
+缺失或格式错误会显式失败，不能再被静默当作预算耗尽。
 
 运行输出位于以下相对目录，不依赖个人用户名：
 

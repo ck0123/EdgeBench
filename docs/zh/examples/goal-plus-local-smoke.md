@@ -1,0 +1,66 @@
+---
+title: "Goal Plus 本地 Smoke Task 清单"
+---
+
+# Goal Plus 本地 Smoke Task 清单
+
+这份清单记录一组适合在本地 Docker backend 中验证 `pi-goal-plus` 的
+EdgeBench task。所有镜像均为 `linux/amd64`。
+
+## 已准备的 task 与镜像
+
+| Task | Base | Work | Judge | 用途 |
+|------|------|------|-------|------|
+| `ad_placement_optimization` | `edgebench.base.cpp:19685ea8d3f4` | `edgebench.work.ad_placement_optimization:49747cad3ebd` | `edgebench.judge.ad_placement_optimization:56cbfc81cfa1` | C++ 连续优化；Goal Plus EdgeBench 集成基线 |
+| `wireless_electricity_layout` | `edgebench.base.cpp:19685ea8d3f4` | `edgebench.work.wireless_electricity_layout:c3179795f69f` | `edgebench.judge.wireless_electricity_layout:1b918c76e808` | 单文件 C++、本地生成器和 tester |
+| `tree_block_partitioning` | `edgebench.base.cpp:19685ea8d3f4` | `edgebench.work.tree_block_partitioning:f282a9f7e05a` | `edgebench.judge.tree_block_partitioning:f74f0ef897ce` | 多阶段 C++ 正确性与得分改进 |
+| `triangulation_coloring_optimization` | `edgebench.base.python310:6fd084182df4` | `edgebench.work.triangulation_coloring_optimization:d3af8893fa81` | `edgebench.judge.triangulation_coloring_optimization:568aa1a5a8ff` | 单文件 Python、连续优化目标和本地 tester |
+| `apple_incremental_game` | `edgebench.base.python310:6fd084182df4` | `edgebench.work.apple_incremental_game:d3c6ed381c59` | `edgebench.judge.apple_incremental_game:16968d8ec7f2` | 单文件 Python、可生成本地测试和连续分数 |
+| `vliw_kernel_optimization` | `edgebench.base.python:e4670062c1cb` | `edgebench.work.vliw_kernel_optimization:9fa380a0ebef` | `edgebench.judge.vliw_kernel_optimization:5cdef0021634` | 确定性 simulator/verifier 和性能优化 |
+
+## 空间记录
+
+一次本地实测中，上述 6 个 task 共对应 15 个本地镜像标签。按共享层口径，
+EdgeBench 镜像约占 3.2 GB；不同 Docker 存储后端的结果可能不同，不能把
+`docker image ls` 中每个标签的显示大小直接相加。
+
+完整的 51-task 公开集曾实测占用约 312 GB。全量下载建议至少准备 300 GB，
+并为运行容器、日志和中间产物预留更多空间；本地 smoke test 不应执行
+`sforge pull --all`。
+
+查看当前实际占用：
+
+```bash
+docker system df
+docker system df -v | grep '^edgebench\.'
+```
+
+## Docker context
+
+SForge 使用 Python Docker SDK。Docker Desktop 或 OrbStack 的 socket 不一定是
+`/var/run/docker.sock`，可以从当前 Docker context 动态设置：
+
+```bash
+export DOCKER_HOST="$(docker context inspect "$(docker context show)" \
+  --format '{{.Endpoints.docker.Host}}')"
+docker info --format 'Architecture={{.Architecture}} DockerRootDir={{.DockerRootDir}}'
+```
+
+预期架构是 `x86_64`/`amd64`。
+
+## 短预算验证
+
+API key 应只通过 shell 环境或 secret manager 注入，不要写进脚本、配置或本文档。
+
+```bash
+export SFORGE_AGENT_API_KEY="<set-outside-the-repository>"
+
+python3 -m sforge.cli run \
+  --task vliw_kernel_optimization \
+  --agent pi-goal-plus \
+  --model <model> \
+  --timeout 600 \
+  --run-id vliw-pi-goal-plus-smoke
+```
+
+建议先用 10–30 分钟验证安装、verifier、提交循环和日志，再增加预算。

@@ -105,24 +105,35 @@ mkdir -p /home/agent/.goal-plus''',
         'task-local tools for Goal Plus process verification.\n'
         '- A process verifier must emit the structured metric expected by '
         'Goal Plus and reject invalid candidate output.\n'
-        '- This is one cycle in a deadline-bounded benchmark. Read the Unix '
-        'deadline from /opt/sforge-agent-deadline. Complete and promote a useful '
-        'cycle promptly; the SForge outer controller will submit it to the hidden '
-        'judge and start another Goal Plus cycle while time remains.\n'
+        '- The entire deadline-bounded SForge benchmark is one Goal Plus task, '
+        'not a smoke test or a short promotion cycle. Read the Unix deadline from '
+        '/opt/sforge-agent-deadline and use the available time for deep optimization '
+        'inside the same Goal Plus record.\n'
+        '- One planning batch or search round is insufficient while substantial '
+        'time remains. Size the frozen search budget from the remaining deadline; '
+        'when more than 30 minutes remain, max_candidates must exceed max_parallel '
+        'and allow at least three sequential planning rounds. Exhaust that '
+        'multi-round budget before selecting and promoting a winner.\n'
+        '- Call search_plan_next repeatedly. Later-round proposals must use '
+        'verifier history and derive from or deliberately challenge the best '
+        'passing candidates from earlier rounds, rather than launching another '
+        'independent smoke batch. If a search run is exhausted with ample time '
+        'remaining, select and promote its winner, then create another search run '
+        'under the same goal_plus_id and continue deep optimization.\n'
         '- Before proposing candidates, run sforge-submit --list and use the '
         'visible score history as outer-loop evidence. Never expose hidden Judge '
         'feedback to candidate workers or make it an internal verifier.\n'
-        '- Do not call sforge-submit without --list. The SForge outer controller '
-        'owns formal Judge submissions after each promoted cycle.\n'
-        '- A single completed search round is not the end of the benchmark. '
-        'Preserve the promoted winner in the submitted workspace so the next '
-        'cycle can use it as its baseline."'
+        '- Do not call sforge-submit without --list. SForge owns formal Judge '
+        'submissions and background evaluation.\n'
+        '- Do not mark the Goal Plus task complete merely because one batch, one '
+        'round, or one search run finished. Reserve the final portion of the '
+        'deadline for selection, promotion, and final audit; only then complete '
+        'the single Goal Plus task."'
     )
-    # A Goal Plus record is terminal after one optimization cycle, while the
-    # SForge benchmark lifecycle is longer. Keep Pi's conversation continuous
-    # with `-c`, submit the promoted winner, and then create the next Goal Plus
-    # record from the current task workspace. Goal Plus records remain bounded
-    # without discarding the main agent's reasoning context between records.
+    # One Goal Plus record owns the complete SForge task and may contain multiple
+    # planning rounds and search runs. If Pi exits before the benchmark deadline,
+    # continue the same conversation and durable Goal Plus record instead of
+    # creating a sequence of shallow records.
     resume_cmd = r'''set -u
 DEADLINE=$(cat /opt/sforge-agent-deadline 2>/dev/null || printf '%s' "${SFORGE_AGENT_DEADLINE:-}")
 case "$DEADLINE" in
@@ -138,17 +149,15 @@ if [ "$REMAINING" -le 120 ]; then
     [ "$REMAINING" -gt 0 ] && sleep "$((REMAINING + 5))"
     exit 0
 fi
-echo "[pi-goal-plus] submitting the promoted result before the next cycle" >&2
-sforge-submit --details || echo "[pi-goal-plus] formal submission failed; continuing with visible history" >&2
-echo "[pi-goal-plus] continuing the existing Pi session with a new Goal Plus cycle" >&2
+echo "[pi-goal-plus] continuing the existing Pi session and Goal Plus task" >&2
 exec pi -p --mode json -c \
   -e /opt/goal-plus/.pi/extensions/goal-plus.ts \
   --provider openai-codex --model "$PI_MODEL" \
-  "/goal-plus Continue the same SForge benchmark from the current promoted files as a new optimization cycle.
+  "Continue the existing Goal Plus benchmark task from its durable goal and search state. Do not invoke /goal-plus and do not create a new Goal Plus record.
 
-First run sforge-submit --list and inspect the formal Judge history. Do not call sforge-submit without --list; the outer controller owns formal submissions. Improve on the current best solution rather than restarting from the original trivial baseline. Use Goal Plus Search Mode with local task verifiers for candidate ranking, promote the best locally verified candidate into the submitted workspace, and finish this cycle promptly so the outer controller can judge it and start another cycle.
+The previous Pi process ended with substantial benchmark time remaining. If the existing Goal Plus record was marked complete before deep multi-round optimization and the final deadline window, reactivate that same record with a clear reason and evidence. Continue from the current promoted files and existing verifier history. If the prior search run is terminal, create and link another search run under the same goal_plus_id.
 
-The benchmark hard deadline is Unix timestamp $(cat /opt/sforge-agent-deadline). A completed Goal Plus cycle is not permission to end the benchmark early; SForge owns repetition until that deadline. Candidate workers must never call sforge-submit or receive hidden Judge feedback."'''
+The benchmark hard deadline is Unix timestamp $(cat /opt/sforge-agent-deadline). Use the remaining time for deep optimization with multiple sequential planning rounds. Do not complete after a single candidate batch or search round. Later rounds must build on verifier-backed history from earlier rounds. Reserve the final deadline window for selecting, promoting, and auditing the best candidate. Candidate workers must never call sforge-submit or receive hidden Judge feedback."'''
 
     def prepare_container(
         self,

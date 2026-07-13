@@ -124,9 +124,16 @@ mkdir -p /home/agent/.goal-plus''',
     # record from the current task workspace. Goal Plus records remain bounded
     # without discarding the main agent's reasoning context between records.
     resume_cmd = r'''set -u
-DEADLINE=$(cat /opt/sforge-agent-deadline 2>/dev/null || echo 0)
+DEADLINE=$(cat /opt/sforge-agent-deadline 2>/dev/null || printf '%s' "${SFORGE_AGENT_DEADLINE:-}")
+case "$DEADLINE" in
+    ''|*[!0-9]*)
+        echo "[pi-goal-plus] invalid or missing SForge deadline: $DEADLINE" >&2
+        exit 2
+        ;;
+esac
 NOW=$(date +%s)
 REMAINING=$((DEADLINE - NOW))
+echo "[pi-goal-plus] deadline=$DEADLINE remaining=${REMAINING}s" >&2
 if [ "$REMAINING" -le 120 ]; then
     [ "$REMAINING" -gt 0 ] && sleep "$((REMAINING + 5))"
     exit 0

@@ -540,14 +540,35 @@ def run_agent(
 
         # Agent-specific lifecycle controllers can use this host-authored
         # deadline without counting image preparation and installation time.
-        backend.exec_run(
+        deadline_text = str(int(deadline_at))
+        deadline_result = backend.exec_run(
             handle,
-            (
-                f"printf '%s\\n' {int(deadline_at)} > "
-                "/opt/sforge-agent-deadline"
-            ),
+            [
+                "/bin/sh",
+                "-c",
+                f"printf '%s\\n' {deadline_text} > /opt/sforge-agent-deadline",
+            ],
             user="root",
         )
+        if deadline_result.exit_code != 0:
+            raise RuntimeError(
+                "Failed to write the agent deadline inside the work container: "
+                f"{deadline_result.output.strip()}"
+            )
+        deadline_check = backend.exec_run(
+            handle,
+            ["cat", "/opt/sforge-agent-deadline"],
+            user="root",
+        )
+        if (
+            deadline_check.exit_code != 0
+            or deadline_check.output.strip() != deadline_text
+        ):
+            raise RuntimeError(
+                "Agent deadline verification failed inside the work container"
+            )
+        env["SFORGE_AGENT_DEADLINE"] = deadline_text
+        logger.info("Agent deadline installed: %s", deadline_text)
 
         on_chunk_cb = None
 

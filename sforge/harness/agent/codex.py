@@ -29,12 +29,13 @@ class CodexAgent(Agent):
     name = "codex"
     install_cmds = [
         "sudo -E bash -c 'NODE_MIRROR=${SFORGE_NODEJS_MIRROR_URL:-https://nodejs.org/dist} && curl -fsSL $NODE_MIRROR/v20.18.0/node-v20.18.0-linux-x64.tar.xz | tar -xJ -C /usr/local --strip-components=1'",
-        "sudo -E npm install -g @openai/codex@0.130.0",
+        "sudo -E npm install -g @openai/codex@0.144.1",
         '''if [ -n "$OPENAI_BASE_URL" ]; then
     mkdir -p ~/.codex
     cat > ~/.codex/config.toml << EOF
 model_provider = "sforge-proxy"
 model_verbosity = "medium"
+model_reasoning_effort = "medium"
 model = "${CODEX_MODEL:-gpt-5.5}"
 
 [model_providers.sforge-proxy]

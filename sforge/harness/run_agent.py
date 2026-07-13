@@ -357,6 +357,7 @@ def run_agent(
         env["SFORGE_TOKEN"] = session_token
         env["SFORGE_PATCH_DIR"] = task_spec.cwd
         env["SFORGE_SUBMIT_PATHS"] = " ".join(task_spec.submit_paths)
+        env["SFORGE_AGENT_TOTAL_BUDGET_SECONDS"] = str(int(effective_timeout))
         env["SFORGE_SUBMIT_EXCLUDE_FLAGS"] = " ".join(
             f"--exclude={e}" for e in task_spec.submit_exclude
         )
@@ -568,7 +569,11 @@ def run_agent(
                 "Agent deadline verification failed inside the work container"
             )
         env["SFORGE_AGENT_DEADLINE"] = deadline_text
-        logger.info("Agent deadline installed: %s", deadline_text)
+        logger.info(
+            "Agent time budget installed: total=%ss, deadline=%s",
+            int(effective_timeout),
+            deadline_text,
+        )
 
         on_chunk_cb = None
 

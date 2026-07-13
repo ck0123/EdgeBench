@@ -66,16 +66,23 @@ commit。Node.js 和 Pi 仍随新容器安装，但默认从 npmmirror 下载。
 
 Codex agent 会把 SForge 生成的 EdgeBench prompt 原样交给 `codex exec`；普通 Pi 也会
 原样交给 `pi`。`pi-goal-plus` 保持同一份原始 prompt，只通过 `/goal-plus` 入口加载
-Goal Plus，并在 prompt 末尾追加一句：
+Goal Plus，并在 prompt 末尾追加深度搜索和宿主提供的时间信息：
 
 ```text
 Use the Goal Plus framework to perform deep search optimization for this task.
+The total exploration time budget for this task is <total-seconds> seconds.
+The hard deadline is Unix timestamp <deadline>, and <remaining-seconds> seconds remain at this launch.
 ```
 
-这里不额外规定 round 数、candidate 数、并行数或按剩余时间划分的阈值；具体 SearchSpec
-和搜索深度由 Goal Plus 根据原任务自行判断。若 Pi 提前退出，auto resume 与普通 Pi
-一致，通过同一个 session 执行 `Continue working.`，并继续强调使用 Goal Plus 做深度
-搜索。SForge 不使用固定的 20 分钟 segment timeout；只有单 task 的全局 `7200` 秒
+总预算来自本次 `sforge run --timeout` 的实际值，不写死为 2 小时。硬截止时间由宿主在
+agent 正式开始前生成，安装环境的时间不计入；启动和每次 resume 都会用当前时间重新
+计算剩余秒数。容器内 `/opt/sforge-agent-deadline` 始终保留权威 deadline，prompt 会
+要求 agent 在决定下一轮搜索前刷新剩余时间。
+
+这里不额外规定 round 数、candidate 数、并行数或按剩余时间划分的阈值；时间只是给
+Goal Plus 自主规划 SearchSpec、搜索深度和最终验证留时使用。若 Pi 提前退出，auto
+resume 与普通 Pi 一致，通过同一个 session 执行 `Continue working.` 并注入新的剩余
+时间。SForge 不使用固定的 20 分钟 segment timeout；只有单 task 的全局 `7200` 秒
 时限会结束 agent。
 
 ---

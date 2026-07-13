@@ -91,18 +91,32 @@ test -f /opt/goal-plus/.pi/extensions/goal-plus.ts
 mkdir -p /home/agent/.goal-plus''',
     ]
     run_cmd = (
-        'pi -p --mode json '
+        'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
+        'exec pi -p --mode json '
         '-e /opt/goal-plus/.pi/extensions/goal-plus.ts '
         '--provider openai-codex --model "$PI_MODEL" '
         '"/goal-plus $(cat {prompt_file})\n\n'
-        'Use the Goal Plus framework to perform deep search optimization for this task."'
+        'Use the Goal Plus framework to perform deep search optimization for this task.\n'
+        'The total exploration time budget for this task is '
+        '${{SFORGE_AGENT_TOTAL_BUDGET_SECONDS}} seconds. The hard deadline is Unix '
+        'timestamp ${{SFORGE_AGENT_DEADLINE}}, and ${{REMAINING}} seconds remain at '
+        'this launch. The authoritative deadline is also available in '
+        '/opt/sforge-agent-deadline. Use this time information to decide the '
+        'search budget, number of rounds, and final-verification time yourself; '
+        'no round count is prescribed. Refresh the remaining time before deciding '
+        'whether to start each next search round."'
     )
     resume_cmd = (
-        'pi -p --mode json -c '
+        'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
+        'exec pi -p --mode json -c '
         '-e /opt/goal-plus/.pi/extensions/goal-plus.ts '
         '--provider openai-codex --model "$PI_MODEL" '
         '"Continue working. Use the Goal Plus framework to continue deep search '
-        'optimization for this task."'
+        'optimization for this task. The total exploration time budget is '
+        '${{SFORGE_AGENT_TOTAL_BUDGET_SECONDS}} seconds; the hard deadline is Unix '
+        'timestamp ${{SFORGE_AGENT_DEADLINE}}, and ${{REMAINING}} seconds remain now. '
+        'Use the current remaining time to choose the next search work yourself; '
+        'no round count is prescribed."'
     )
 
     def prepare_container(

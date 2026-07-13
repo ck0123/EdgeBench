@@ -21,7 +21,7 @@ title: "Pi + Goal Plus 夜间顺序运行配置"
 | Work CPU 上限 | `3` |
 | Judge CPU 上限 | `2` |
 | Auto eval | 每 `300` 秒 |
-| Auto resume | 开启；Goal Plus 单 cycle 最长 `1200` 秒 |
+| Auto resume | 开启；沿用同一个 Pi session，Goal Plus 完成后再切换 cycle |
 | 容器网络 | 开启 |
 | Node.js / npm | npmmirror |
 | C++ task 的 Python | 清华 Ubuntu 镜像提供 Python 3.10 |
@@ -63,6 +63,13 @@ commit。Node.js 和 Pi 仍随新容器安装，但默认从 npmmirror 下载。
 的 Ubuntu 22.04 C++ work image 通过清华 Ubuntu 镜像安装系统 Python；Python task
 直接使用镜像内版本。两条路径都不会经过 `uv` 下载 GitHub Release，Python 包使用
 清华 PyPI。Docker task 镜像本身不会重复下载。
+
+SForge 的普通 Codex agent 使用 `codex exec resume --last` 延续最近会话；这里的 Pi
+采用等价的 `pi -c`。因此 cycle 之间保留主 agent 的对话上下文、当前工作区和 Goal
+Plus 持久化搜索记录。每条 Goal Plus record 仍在完成一次优化 cycle 后终止，随后在
+同一个 Pi session 中从已提升的 winner 创建下一条 record。SForge 不再用固定的
+20 分钟 segment timeout 强制切断尚未完成的 Goal Plus record；仅有单 task 的全局
+`7200` 秒时限会结束 agent。
 
 ---
 

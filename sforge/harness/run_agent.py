@@ -588,6 +588,13 @@ def run_agent(
             all_output_parts.append(seg_result.output)
             total_runtime += seg_result.elapsed_seconds
             remaining_timeout -= seg_result.elapsed_seconds
+            logger.info(
+                "Agent segment finished: exit_code=%s, timed_out=%s, "
+                "runtime=%.1fs",
+                seg_result.exit_code,
+                seg_result.timed_out,
+                seg_result.elapsed_seconds,
+            )
 
             if seg_result.timed_out:
                 if (
@@ -611,10 +618,14 @@ def run_agent(
             if not can_resume:
                 break
             if seg_result.elapsed_seconds < MIN_RUNTIME_FOR_RESUME:
+                output_tail = seg_result.output.strip()[-1000:]
                 logger.warning(
                     f"Agent exited after only {seg_result.elapsed_seconds:.1f}s "
-                    f"(< {MIN_RUNTIME_FOR_RESUME}s), not resuming (likely systematic failure)"
+                    f"(< {MIN_RUNTIME_FOR_RESUME}s), exit_code={seg_result.exit_code}; "
+                    "not resuming (likely systematic failure)"
                 )
+                if output_tail:
+                    logger.warning("Short agent exit output tail: %s", output_tail)
                 break
             if resume_count >= MAX_RESUMES:
                 logger.warning(f"Max resume attempts ({MAX_RESUMES}) reached")

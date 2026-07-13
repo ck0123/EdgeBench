@@ -34,10 +34,6 @@ class PiGoalPlusAgent(PiAgent):
     """Run the normal EdgeBench prompt through Pi's ``/goal-plus`` entrypoint."""
 
     name = "pi-goal-plus"
-    # Bound one Goal Plus record so a long final audit cannot consume the
-    # entire benchmark. SForge submits the promoted root workspace between
-    # segments and starts a fresh record with the remaining global budget.
-    segment_timeout = 1200
     install_cmds = [
         *PiAgent.install_cmds,
         f'''if [ ! -f {GOAL_PLUS_CONTAINER_DIR}/pyproject.toml ]; then
@@ -122,20 +118,23 @@ mkdir -p /home/agent/.goal-plus''',
         'Preserve the promoted winner in the submitted workspace so the next '
         'cycle can use it as its baseline."'
     )
-    # A Goal Plus record is terminal after one optimization cycle. The SForge
-    # benchmark lifecycle is longer: submit that cycle's promoted winner, then
-    # start a fresh Goal Plus record from the winner now present in the task
-    # workspace. This deliberately does not use Pi's ordinary `-c` continuation,
-    # which would resume outside the completed Goal Plus lifecycle.
-    resume_cmd = r'''DEADLINE=$(cat /opt/sforge-agent-deadline 2>/dev/null || echo 0)
+    # A Goal Plus record is terminal after one optimization cycle, while the
+    # SForge benchmark lifecycle is longer. Keep Pi's conversation continuous
+    # with `-c`, submit the promoted winner, and then create the next Goal Plus
+    # record from the current task workspace. Goal Plus records remain bounded
+    # without discarding the main agent's reasoning context between records.
+    resume_cmd = r'''set -u
+DEADLINE=$(cat /opt/sforge-agent-deadline 2>/dev/null || echo 0)
 NOW=$(date +%s)
 REMAINING=$((DEADLINE - NOW))
 if [ "$REMAINING" -le 120 ]; then
     [ "$REMAINING" -gt 0 ] && sleep "$((REMAINING + 5))"
     exit 0
 fi
-sforge-submit --details || true
-pi -p --mode json \
+echo "[pi-goal-plus] submitting the promoted result before the next cycle" >&2
+sforge-submit --details || echo "[pi-goal-plus] formal submission failed; continuing with visible history" >&2
+echo "[pi-goal-plus] continuing the existing Pi session with a new Goal Plus cycle" >&2
+exec pi -p --mode json -c \
   -e /opt/goal-plus/.pi/extensions/goal-plus.ts \
   --provider openai-codex --model "$PI_MODEL" \
   "/goal-plus Continue the same SForge benchmark from the current promoted files as a new optimization cycle.

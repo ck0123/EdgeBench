@@ -427,7 +427,8 @@ def run_agent(
         backend.start_container(handle)
         logger.info(f"Container started: {container_name} (judge_url={judge_url})")
 
-        # 3. Install agent runtime
+        # 3. Prepare agent-owned assets, then install the agent runtime.
+        agent.prepare_container(backend, handle, logger)
         for i, cmd in enumerate(agent.install_cmds):
             logger.info(
                 f"Install step {i + 1}/{len(agent.install_cmds)}: {cmd}"
@@ -532,14 +533,30 @@ def run_agent(
         MAX_RESUMES = 100
 
         started_at = time.time()
+        deadline_at = started_at + effective_timeout
         from datetime import datetime
         started_at_iso = datetime.fromtimestamp(started_at).strftime("%Y-%m-%dT%H:%M:%S")
         (log_dir / "started_at").write_text(f"{started_at_iso}\n{started_at}\n")
+
+        # Agent-specific lifecycle controllers can use this host-authored
+        # deadline without counting image preparation and installation time.
+        backend.exec_run(
+            handle,
+            (
+                f"printf '%s\\n' {int(deadline_at)} > "
+                "/opt/sforge-agent-deadline"
+            ),
+            user="root",
+        )
 
         on_chunk_cb = None
 
         while remaining_timeout > 0:
             is_resume = resume_count > 0
+            segment_timeout = min(
+                remaining_timeout,
+                float(agent.segment_timeout or remaining_timeout),
+            )
             run_cmd = agent.format_run_cmd(
                 prompt_path, model=model,
                 internet=internet, resume=is_resume,
@@ -550,12 +567,16 @@ def run_agent(
                     f"{remaining_timeout:.0f}s left): {run_cmd[:200]}..."
                 )
             else:
-                logger.info(f"Running agent: {run_cmd[:200]}... (timeout={remaining_timeout:.0f}s)")
+                logger.info(
+                    f"Running agent: {run_cmd[:200]}... "
+                    f"(timeout={segment_timeout:.0f}s, "
+                    f"global_remaining={remaining_timeout:.0f}s)"
+                )
 
             seg_result = backend.exec_run_with_timeout(
                 handle,
                 ["/bin/bash", "-c", run_cmd],
-                timeout=int(remaining_timeout),
+                timeout=int(segment_timeout),
                 log_file=agent_live_log,
                 workdir=task_spec.cwd,
                 environment=env,
@@ -566,8 +587,24 @@ def run_agent(
             )
             all_output_parts.append(seg_result.output)
             total_runtime += seg_result.elapsed_seconds
+            remaining_timeout -= seg_result.elapsed_seconds
 
             if seg_result.timed_out:
+                if (
+                    can_resume
+                    and agent.segment_timeout is not None
+                    and not (shutdown_event is not None and shutdown_event.is_set())
+                    and remaining_timeout > 1
+                    and resume_count < MAX_RESUMES
+                ):
+                    resume_count += 1
+                    logger.info(
+                        "Agent segment reached its %.0fs limit; starting the "
+                        "next benchmark cycle with %.0fs left",
+                        segment_timeout,
+                        remaining_timeout,
+                    )
+                    continue
                 agent_timed_out = True
                 break
 
@@ -583,7 +620,6 @@ def run_agent(
                 logger.warning(f"Max resume attempts ({MAX_RESUMES}) reached")
                 break
 
-            remaining_timeout -= seg_result.elapsed_seconds
             resume_count += 1
             logger.info(f"Agent exited after {seg_result.elapsed_seconds:.1f}s, will resume")
 
@@ -598,6 +634,8 @@ def run_agent(
         if auto_eval_stop is not None:
             auto_eval_stop.set()
             logger.info("Auto-eval thread stopped")
+
+        agent.collect_artifacts(backend, handle, log_dir, logger)
 
         # 8. Extract final archive (tar of submit_paths)
         try:

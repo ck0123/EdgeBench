@@ -44,6 +44,7 @@ class Agent(abc.ABC):
     model_env: str | None = None
     default_model: str | None = None
     timeout: int = 3600
+    segment_timeout: int | None = None
     stop_hook: str | None = None
     resume_cmd: str | None = None
 
@@ -60,6 +61,23 @@ class Agent(abc.ABC):
         Called **after** the generic env vars (proxy, API key, model,
         mirrors, extra_env) have already been applied.
         """
+
+    def prepare_container(
+        self,
+        backend: ContainerBackend,
+        handle: ContainerHandle,
+        logger: logging.Logger,
+    ) -> None:
+        """Copy optional agent-owned assets before ``install_cmds`` run."""
+
+    def collect_artifacts(
+        self,
+        backend: ContainerBackend,
+        handle: ContainerHandle,
+        log_dir: Path,
+        logger: logging.Logger,
+    ) -> None:
+        """Collect optional agent-owned state before the work container stops."""
 
     def format_run_cmd(
         self,

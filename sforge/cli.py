@@ -757,14 +757,6 @@ def cmd_proxy(args):
 
     http_proxy = config.http_proxy
     https_proxy = config.https_proxy
-    if not http_proxy and not https_proxy:
-        print(
-            "ERROR: No proxy configured. Set SFORGE_HTTPS_PROXY (or HTTPS_PROXY) "
-            "before starting the proxy.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     from sforge.harness.api_proxy import APIProxy
 
     proxy = APIProxy(
@@ -776,7 +768,7 @@ def cmd_proxy(args):
     )
     print(f"Starting API proxy on {proxy.local_url}")
     print(f"  Forwarding to: {proxy.target_url}")
-    print(f"  Via proxy:     {https_proxy or http_proxy}")
+    print(f"  Via proxy:     {https_proxy or http_proxy or 'direct'}")
     print()
     print("Usage: in another terminal, run:")
     print(f"  export SFORGE_AGENT_API_BASE_URL=http://host.docker.internal:{proxy.port}")
@@ -938,7 +930,10 @@ def main():
                             "Multiple tasks are run fully in parallel.")
     p_run.add_argument("--experiment", default=None,
                        help="Path to experiment YAML config file (model config + per-task overrides)")
-    p_run.add_argument("--agent", default=None, help="Agent name (claude-code, aider, codex)")
+    p_run.add_argument(
+        "--agent", default=None,
+        help="Agent name (claude-code, codex, pi, pi-goal-plus)",
+    )
     p_run.add_argument("--model", default=None, help="Model override")
     p_run.add_argument("--timeout", type=int, default=None, help="Agent timeout in seconds")
     p_run.add_argument("--eval-interval", type=int, default=None, help=f"Auto-eval interval in seconds (default {DEFAULT_EVAL_INTERVAL})")

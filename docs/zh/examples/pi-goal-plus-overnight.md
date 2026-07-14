@@ -129,13 +129,21 @@ caffeinate -dimsu ./scripts/run_pi_goal_plus_overnight.sh
 caffeinate -dimsu ./scripts/run_pi_goal_plus_overnight.sh --start-at 23:00
 ```
 
+前序任务已经完成、需要从某个 task 续跑时：
+
+```bash
+caffeinate -dimsu ./scripts/run_pi_goal_plus_overnight.sh \
+  --from-task tree_block_partitioning
+```
+
 启动正常时，首个 task 的 `run_agent.log` 应依次出现：
 
 ```text
 Copied host Pi openai-codex login into the work container
-Goal Plus source not configured; install will download pinned commit
+Install step 4/6: ... git clone --depth 1 --branch main ...
 Agent installation complete
-Agent deadline installed: <unix-timestamp>
+Goal Plus stop gate is provided by the Pi extension's native agent_end hook
+Agent time budget installed: total=7200s, deadline=<unix-timestamp>
 Running agent: ... --provider openai-codex --model "$PI_MODEL" ...
 ```
 

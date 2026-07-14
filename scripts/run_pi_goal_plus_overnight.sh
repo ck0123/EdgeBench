@@ -11,6 +11,7 @@ Run six EdgeBench tasks sequentially, one task at a time.
 
 Options:
   --start-at HH:MM   Wait until the next local occurrence of HH:MM before running.
+  --from-task TASK   Start at TASK and run the remaining configured tasks.
   --dry-run          Print the planned commands without starting containers.
   --help             Show this help.
 
@@ -30,6 +31,7 @@ EOF
 }
 
 start_at=""
+from_task=""
 dry_run=0
 
 while [[ $# -gt 0 ]]; do
@@ -42,6 +44,11 @@ while [[ $# -gt 0 ]]; do
         --dry-run)
             dry_run=1
             shift
+            ;;
+        --from-task)
+            [[ $# -ge 2 ]] || { echo "--from-task requires a task ID" >&2; exit 2; }
+            from_task="$2"
+            shift 2
             ;;
         --help|-h)
             usage
@@ -158,6 +165,21 @@ tasks=(
     vliw_kernel_optimization
 )
 
+if [[ -n "$from_task" ]]; then
+    from_index=-1
+    for index in "${!tasks[@]}"; do
+        if [[ "${tasks[$index]}" == "$from_task" ]]; then
+            from_index="$index"
+            break
+        fi
+    done
+    if [[ "$from_index" -lt 0 ]]; then
+        echo "Unknown --from-task value: $from_task" >&2
+        exit 2
+    fi
+    tasks=("${tasks[@]:$from_index}")
+fi
+
 required_images=(
     edgebench.base.cpp:19685ea8d3f4
     edgebench.base.python310:6fd084182df4
@@ -194,7 +216,8 @@ if [[ "$missing" -ne 0 ]]; then
     exit 1
 fi
 
-log "Plan: 6 tasks, strictly sequential (maximum task concurrency: 1)"
+task_count="${#tasks[@]}"
+log "Plan: $task_count tasks, strictly sequential (maximum task concurrency: 1)"
 log "Agent: pi-goal-plus; model: $model; timeout: ${timeout_seconds}s per task"
 log "Resource caps: work=${work_cpu_limit} CPU, judge=${judge_cpu_limit} CPU"
 log "Batch logs: $batch_log_dir"
@@ -262,7 +285,7 @@ for index in "${!tasks[@]}"; do
         --run-id "$run_id"
     )
 
-    log "Task $task_number/6: $task"
+    log "Task $task_number/$task_count: $task"
     if [[ "$dry_run" -eq 1 ]]; then
         printf '  '
         printf '%q ' "${command[@]}"

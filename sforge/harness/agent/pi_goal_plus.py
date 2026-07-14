@@ -66,6 +66,7 @@ elif command -v python >/dev/null 2>&1 && python -c 'import sys; raise SystemExi
 elif command -v apt-get >/dev/null 2>&1; then
     if [ -f /etc/apt/sources.list ]; then
         sudo sed -i \
+          -e 's|http://mirrors.byted.org/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
           -e 's|http://archive.ubuntu.com/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
           -e 's|http://security.ubuntu.com/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
           /etc/apt/sources.list
@@ -80,7 +81,22 @@ else
     sudo env UV_PYTHON_INSTALL_DIR=/opt/uv-python uv python install 3.11
     PYTHON=$(UV_PYTHON_INSTALL_DIR=/opt/uv-python uv python find 3.11)
 fi
-sudo "$PYTHON" -m ensurepip --upgrade >/dev/null 2>&1 || true
+if ! "$PYTHON" -m pip --version >/dev/null 2>&1; then
+    sudo "$PYTHON" -m ensurepip --upgrade >/dev/null 2>&1 || true
+fi
+if ! "$PYTHON" -m pip --version >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
+    if [ -f /etc/apt/sources.list ]; then
+        sudo sed -i \
+          -e 's|http://mirrors.byted.org/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
+          -e 's|http://archive.ubuntu.com/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
+          -e 's|http://security.ubuntu.com/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
+          /etc/apt/sources.list
+    fi
+    sudo -E apt-get update
+    sudo -E env DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip
+    PYTHON=$(command -v python3)
+fi
+"$PYTHON" -m pip --version
 sudo "$PYTHON" -m pip install --disable-pip-version-check \
   --index-url "${SFORGE_GOAL_PLUS_PYPI_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}" \
   /opt/goal-plus

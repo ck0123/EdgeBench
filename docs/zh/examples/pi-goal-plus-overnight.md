@@ -164,3 +164,37 @@ logs/runs/<run-id>/<task>/final_result.json
 脚本会检查镜像、Pi auth 文件和 Judge 服务。每个 task 结束后还会检查
 `final_result.json` 中的 agent runtime；若安装或认证失败导致运行时间明显不足，
 队列立即停止，不会继续消耗后续 5 个 task。
+
+## 成绩换算与官方结果对比
+
+EdgeBench judge 同时记录任务原始分和统一的 `0–100` 换算分。不要直接用原始分
+判断结果好坏；不同任务可能分别采用最大化、最小化、对数或分段换算。
+
+运行中或结束后，可直接生成同预算的官方公开结果对比：
+
+```bash
+python scripts/report_edgebench_scores.py \
+  --latest tree_block_partitioning \
+  --model gpt-5.5 \
+  --budget-hours 2
+```
+
+也可以指定一次 run 的任务目录：
+
+```bash
+python scripts/report_edgebench_scores.py \
+  --run-dir logs/runs/<run-id>/<task> \
+  --budget-hours 2
+```
+
+脚本从 `tasks/<task>.json` 读取官方换算规则，从仓库 `README.md` 读取 51 个公开任务
+的官方 `@2h/@4h/.../@12h` 曲线，并输出：
+
+- 原始分与 EdgeBench `0–100` 分；
+- 同模型、同时间检查点的差值和达成率；
+- 官方公开模型中的领先者；
+- 将当前 run 加入公开模型后的参考位置。
+
+顺序批处理脚本会在每个任务完成后自动调用该报告。该结果属于同量纲参考；若
+Agent、CPU、超时或其他运行设置与官方 leaderboard 配置不同，不应表述为正式
+leaderboard 名次。

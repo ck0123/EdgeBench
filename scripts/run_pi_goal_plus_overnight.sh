@@ -325,6 +325,13 @@ PY
     fi
 
     log "Task $task completed."
+    if ! "$python_bin" "$repo_root/scripts/report_edgebench_scores.py" \
+        --run-dir "$repo_root/logs/runs/$run_id/$task" \
+        --model "$model" \
+        --budget-seconds "$timeout_seconds"
+    then
+        log "Score comparison failed for $task; the completed run is preserved."
+    fi
 done
 
 if [[ "$dry_run" -eq 1 ]]; then

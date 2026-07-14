@@ -18,8 +18,8 @@ Options:
 Environment overrides:
   MODEL              Model ID (default: gpt-5.5)
   TIMEOUT_SECONDS    Per-task agent runtime (default: 7200)
-  WORK_CPU_LIMIT     CPU cap per work container (default: 3)
-  JUDGE_CPU_LIMIT    CPU cap per judge container (default: 2)
+  WORK_CPU_LIMIT     CPU cap per work container (default: 4)
+  JUDGE_CPU_LIMIT    CPU cap per judge container (default: 3)
   SFORGE_ENV_FILE    Private env file to source (default: ~/.config/sforge/agent.env)
   SFORGE_PI_AUTH_FILE
                       Pi auth file (default: ~/.pi/agent/auth.json)
@@ -102,8 +102,8 @@ unset SFORGE_GOAL_PLUS_PYTHON_DIR
 
 model="${MODEL:-gpt-5.5}"
 timeout_seconds="${TIMEOUT_SECONDS:-7200}"
-work_cpu_limit="${WORK_CPU_LIMIT:-3}"
-judge_cpu_limit="${JUDGE_CPU_LIMIT:-2}"
+work_cpu_limit="${WORK_CPU_LIMIT:-4}"
+judge_cpu_limit="${JUDGE_CPU_LIMIT:-3}"
 
 if [[ -x "$repo_root/.venv/bin/sforge" ]]; then
     sforge_cmd=("$repo_root/.venv/bin/sforge")

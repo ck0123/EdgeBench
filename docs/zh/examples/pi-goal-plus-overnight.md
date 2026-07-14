@@ -18,10 +18,10 @@ title: "Pi + Goal Plus 夜间顺序运行配置"
 | Model | `gpt-5.5` |
 | 单 task agent 时限 | `7200` 秒 |
 | task 并发数 | `1`，严格顺序 |
-| Work CPU 上限 | `3` |
-| Judge CPU 上限 | `2` |
+| Work CPU 上限 | `4` |
+| Judge CPU 上限 | `3` |
 | Auto eval | 每 `300` 秒 |
-| Auto resume | 开启；与普通 Pi 一样通过 `pi -c` 和 `Continue working.` 延续 session |
+| Auto resume | 开启；先同步最新 promotion/Judge 状态，再通过 `pi -c` 延续同一 session |
 | Stop gate | Goal Plus Pi extension 的原生 `agent_end` hook |
 | 容器网络 | 开启 |
 | Node.js / npm | npmmirror |
@@ -81,11 +81,40 @@ agent 正式开始前生成，安装环境的时间不计入；启动和每次 r
 计算剩余秒数。容器内 `/opt/sforge-agent-deadline` 始终保留权威 deadline，prompt 会
 要求 agent 在决定下一轮搜索前刷新剩余时间。
 
-这里不额外规定 round 数、candidate 数、并行数或按剩余时间划分的阈值；时间只是给
-Goal Plus 自主规划 SearchSpec、搜索深度和最终验证留时使用。若 Pi 提前退出，auto
-resume 与普通 Pi 一致，通过同一个 session 执行 `Continue working.` 并注入新的剩余
-时间。SForge 不使用固定的 20 分钟 segment timeout；只有单 task 的全局 `7200` 秒
-时限会结束 agent。
+这里不额外规定 round 数或按剩余时间划分的阈值；当前初始 SearchSpec 临时设置
+`max_candidates=15`、`max_parallel=3`，后续搜索深度和最终验证留时由 Goal Plus
+结合剩余时间自主规划。若 Pi 提前退出，auto resume 会先同步最新 promotion/Judge
+状态，再通过同一个 session 执行 `Continue working.` 并注入新的剩余时间。SForge
+不使用固定的 20 分钟 segment timeout；只有单 task 的全局 `7200` 秒时限会结束
+agent。
+
+## Promotion 与 Judge 闭环
+
+Goal Plus candidate 在隔离 workspace 中生成，`search_promote` 只产生 promotion patch，
+不会隐式修改 EdgeBench 主 workspace。`pi-goal-plus` 因此额外安装两个等价入口：
+
+```text
+sforge-goal-plus-sync
+sforge-goal-plus-submit --details
+```
+
+外层 Pi 在每次 `search_promote` 后使用第二个入口。它会读取已选 candidate，核对 GP run
+的 `source_path`，将 `SFORGE_SUBMIT_PATHS` 指定的文件原子复制到主 workspace，逐文件
+校验 SHA-256，然后调用原有 `sforge-submit` 等待 Judge。成功输出同时包含任务原始分、
+官方 `0–100` 换算分、validity 和测试详情，供 Pi 决定是否继续下一轮。auto resume
+也会用 `--if-new` 做同一检查；同一个 candidate 指纹只提交一次，不会因为 resume
+重复消耗提交次数。
+
+物化和提交回执保存在容器的 Goal Plus 状态目录：
+
+```text
+~/.goal-plus/edgebench/latest-materialization.json
+~/.goal-plus/edgebench/latest-submission.json
+```
+
+若 promotion patch 为空、没有修改任何 EdgeBench 提交文件、candidate workspace 缺少
+提交文件、文件哈希不一致或 Judge 返回 error，命令会非零退出，Pi 不应记录完成。
+普通 `sforge-submit` 也会拒绝缺失提交路径和不含任何文件的归档。
 
 ---
 

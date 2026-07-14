@@ -83,6 +83,7 @@ JUDGE_URL="${SFORGE_JUDGE_URL}"
 TOKEN="${SFORGE_TOKEN}"
 PATCH_DIR="${SFORGE_PATCH_DIR:-$(pwd)}"
 STATE_FILE="/tmp/sforge_state.json"
+LAST_RESULT_FILE="/tmp/sforge_last_submit.json"
 
 if [ -z "$JUDGE_URL" ]; then
     echo "ERROR: SFORGE_JUDGE_URL not set" >&2
@@ -113,15 +114,16 @@ if [ "$LIST_MODE" -eq 1 ]; then
     echo "========================================"
     echo ""
     if [ "$COUNT" -gt 0 ]; then
-        printf "  %-14s %-10s %-8s %-12s %-10s %s\n" "ROUND" "STATUS" "VALID" "PASS_RATE" "SCORE" "SUMMARY"
-        printf "  %-14s %-10s %-8s %-12s %-10s %s\n" "-----" "------" "-----" "---------" "-----" "-------"
+        printf "  %-14s %-10s %-8s %-12s %-14s %-10s %s\n" "ROUND" "STATUS" "VALID" "PASS_RATE" "RAW_SCORE" "0-100" "SUMMARY"
+        printf "  %-14s %-10s %-8s %-12s %-14s %-10s %s\n" "-----" "------" "-----" "---------" "---------" "-----" "-------"
         echo "$HIST" | jq -r '.entries[] | select(.type == "submission") |
             "  " +
             ((.round // "-") | . + " " * ([14 - length, 0] | max)) + " " +
             ((.status // "-") | . + " " * ([10 - length, 0] | max)) + " " +
             (if .valid == false then "no" else "yes" end | . + " " * ([8 - length, 0] | max)) + " " +
             (if .pass_rate != null then (.pass_rate * 100 * 10 | floor / 10 | tostring + "%") else "-" end | . + " " * ([12 - length, 0] | max)) + " " +
-            (if .score != null then (.score | tostring) else "-" end | . + " " * ([10 - length, 0] | max)) + " " +
+            (if .score != null then (.score | tostring) else "-" end | . + " " * ([14 - length, 0] | max)) + " " +
+            (if .score_0_100 != null then (.score_0_100 | tostring) else "-" end | . + " " * ([10 - length, 0] | max)) + " " +
             ((.summary // "-") | if length > 40 then .[:37] + "..." else . end)'
     fi
     echo ""
@@ -136,7 +138,12 @@ TAR_PATHS="${SFORGE_SUBMIT_PATHS:-.}"
 if [ -n "${SFORGE_SUBMIT_PATHS:-}" ]; then
     EXISTING_PATHS=""
     for p in $SFORGE_SUBMIT_PATHS; do
-        [ -e "$p" ] && EXISTING_PATHS="$EXISTING_PATHS $p"
+        if [ ! -e "$p" ]; then
+            echo "ERROR: Required submission path is missing: $p" >&2
+            rm -f "$ARCHIVE_FILE"
+            exit 1
+        fi
+        EXISTING_PATHS="$EXISTING_PATHS $p"
     done
     TAR_PATHS="${EXISTING_PATHS# }"
 fi
@@ -144,6 +151,12 @@ if [ -z "$TAR_PATHS" ]; then
     tar czf "$ARCHIVE_FILE" --files-from /dev/null
 else
     tar czf "$ARCHIVE_FILE" --exclude='.git' ${SFORGE_SUBMIT_EXCLUDE_FLAGS:-} $TAR_PATHS
+fi
+ARCHIVE_ENTRIES=$(tar tzf "$ARCHIVE_FILE" | sed '/\/$/d' | wc -l | tr -d ' ')
+if [ "$ARCHIVE_ENTRIES" -eq 0 ]; then
+    echo "ERROR: Submission archive contains no files" >&2
+    rm -f "$ARCHIVE_FILE"
+    exit 1
 fi
 ARCHIVE_SIZE=$(wc -c < "$ARCHIVE_FILE")
 
@@ -207,6 +220,7 @@ if [ "$STATUS" != "completed" ] && [ "$STATUS" != "error" ]; then
     echo "ERROR: Evaluation timed out or judge unreachable" >&2
     exit 1
 fi
+printf '%s\n' "$RESULT" > "$LAST_RESULT_FILE"
 
 # ── Parse + update display cache + print ──
 
@@ -216,6 +230,8 @@ ERROR_MSG=$(echo "$RESULT" | jq -r '.error // empty')
 if [ -n "$ERROR_MSG" ]; then
     CURRENT_RATE=0
     CURRENT_SCORE="null"
+    CURRENT_SCORE_0_100="null"
+    CURRENT_SCORE_0_100_EXTENDED="null"
     PASSED=0
     TOTAL=0
     FAILED=0
@@ -226,6 +242,8 @@ else
     FAILED=$(echo "$REPORT" | jq -r '.failed')
     CURRENT_RATE=$(echo "$REPORT" | jq -r '.pass_rate')
     CURRENT_SCORE=$(echo "$REPORT" | jq -r '.score // null')
+    CURRENT_SCORE_0_100=$(echo "$REPORT" | jq -r '.score_0_100 // null')
+    CURRENT_SCORE_0_100_EXTENDED=$(echo "$REPORT" | jq -r '.score_0_100_extended // null')
     VALID=$(echo "$REPORT" | jq -r '.valid // true')
     SUMMARY=$(echo "$REPORT" | jq -r '.summary // empty')
 fi
@@ -239,8 +257,10 @@ jq --arg round "${ROUND_ID:-unknown}" \
    --argjson ts "$TS" \
    --argjson rate "$CURRENT_RATE" \
    --argjson score "$CURRENT_SCORE" \
+   --argjson score_0_100 "$CURRENT_SCORE_0_100" \
+   --argjson score_0_100_extended "$CURRENT_SCORE_0_100_EXTENDED" \
    '
-   .submissions += [{kind: "agent", round: $round, at: $ts, pass_rate: $rate, score: $score}]
+   .submissions += [{kind: "agent", round: $round, at: $ts, pass_rate: $rate, score: $score, score_0_100: $score_0_100, score_0_100_extended: $score_0_100_extended}]
    | if $rate > (.best_pass_rate // 0) then
        .best_pass_rate = $rate | .best_round = $round | .best_score = $score
      else . end
@@ -251,6 +271,7 @@ if [ -n "$ERROR_MSG" ]; then
     echo "  ${ROUND_ID:-submission}: ERROR"
     echo "  $ERROR_MSG"
     echo "========================================"
+    exit 1
 else
     echo "========================================"
     echo "  ${ROUND_ID:-submission} Results"
@@ -259,7 +280,16 @@ else
         echo "  Valid:       no"
     fi
     if [ "$CURRENT_SCORE" != "null" ]; then
-        echo "  Score:       $CURRENT_SCORE"
+        echo "  Raw score:   $CURRENT_SCORE"
+    fi
+    if [ "$CURRENT_SCORE_0_100" != "null" ]; then
+        SCORE_0_100_FORMATTED=$(printf '%.6f' "$CURRENT_SCORE_0_100")
+        echo "  Official score 0-100: ${SCORE_0_100_FORMATTED}"
+    fi
+    if [ "$CURRENT_SCORE_0_100_EXTENDED" != "null" ] && \
+       [ "$CURRENT_SCORE_0_100_EXTENDED" != "$CURRENT_SCORE_0_100" ]; then
+        SCORE_0_100_EXTENDED_FORMATTED=$(printf '%.6f' "$CURRENT_SCORE_0_100_EXTENDED")
+        echo "  Local extended score: ${SCORE_0_100_EXTENDED_FORMATTED} (diagnostic only)"
     fi
     if [ "$TOTAL" -gt 0 ] 2>/dev/null; then
         PASS_PCT=$(jq -n --argjson r "$CURRENT_RATE" '$r * 100 | . * 10 | floor / 10')

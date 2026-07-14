@@ -34,6 +34,7 @@ class PiGoalPlusAgent(PiAgent):
     """Run the normal EdgeBench prompt through Pi's ``/goal-plus`` entrypoint."""
 
     name = "pi-goal-plus"
+    install_goal_plus_bridge = True
     # Goal Plus registers its stop gate through Pi's native ``agent_end`` event
     # in the extension loaded by run_cmd/resume_cmd.
     stop_hook = "pi-native-goal-plus"
@@ -125,21 +126,37 @@ mkdir -p /home/agent/.goal-plus''',
         '/opt/sforge-agent-deadline. Use this time information to decide the '
         'search budget, number of rounds, and final-verification time yourself; '
         'no round count is prescribed. Refresh the remaining time before deciding '
-        'whether to start each next search round."'
+        'whether to start each next search round.\n\n'
+        'EdgeBench integration requirement: Goal Plus candidate workspaces are '
+        'isolated from the main task workspace. After every search_promote call, '
+        'the outer/main Pi session must run sforge-goal-plus-submit --details. '
+        'That command atomically copies the selected candidate submitted files '
+        'into the main workspace, verifies their hashes, then synchronously calls '
+        'the Judge and returns its raw score, official 0-100 score, validity, and '
+        'test details. Never call it from a candidate worker. Do not record the '
+        'search result or mark the goal complete when this command fails. Use the '
+        'returned Judge result when deciding whether another search round is '
+        'needed."'
     )
     resume_cmd = (
         'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
+        'SYNC_OUTPUT=$(sforge-goal-plus-submit --details --if-new 2>&1); '
+        'SYNC_STATUS=$?; '
         'exec pi -p --mode json -c '
         '-e /opt/goal-plus/.pi/extensions/goal-plus.ts '
         '--provider openai-codex --model "$PI_MODEL" '
-        '"Continue working. Use the Goal Plus framework to continue deep search '
+        '"Continue working. Before this resume, the EdgeBench Goal Plus promotion '
+        'bridge returned exit status ${SYNC_STATUS}:\n${SYNC_OUTPUT}\n\n'
+        'Use the Goal Plus framework to continue deep search '
         'optimization for this task. The total exploration time budget is '
         '${SFORGE_AGENT_TOTAL_BUDGET_SECONDS} seconds; the hard deadline is Unix '
         'timestamp ${SFORGE_AGENT_DEADLINE}, and ${REMAINING} seconds remain now. '
         'If the initial SearchSpec has not been frozen yet, set '
         'budget.max_candidates to 15 and budget.max_parallel to 3. '
         'Use the current remaining time to choose the next search work yourself; '
-        'no round count is prescribed."'
+        'no round count is prescribed. After every search_promote, run '
+        'sforge-goal-plus-submit --details from the outer/main session and require '
+        'a successful Judge result before recording or completing the search."'
     )
 
     def prepare_container(

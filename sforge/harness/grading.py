@@ -53,6 +53,7 @@ class EvalReport:
     pass_rate: float = 0.0
     score: float | None = None
     score_0_100: float | None = None
+    score_0_100_extended: float | None = None
     timed_out: bool = False
     runtime_seconds: float = 0.0
     test_details: list[dict] = field(default_factory=list)

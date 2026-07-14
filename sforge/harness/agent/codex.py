@@ -18,6 +18,8 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shlex
 from pathlib import Path, PurePosixPath
 
 from sforge.harness.agent.base import Agent
@@ -44,6 +46,7 @@ base_url = "${OPENAI_BASE_URL}"
 env_key = "OPENAI_API_KEY"
 EOF
 fi''',
+        "test -s ~/.codex/auth.json && codex login status >/dev/null",
     ]
     run_cmd = 'codex exec --dangerously-bypass-approvals-and-sandbox "$(cat {prompt_file})"'
     resume_cmd = 'codex exec resume --last --dangerously-bypass-approvals-and-sandbox "Continue working."'
@@ -52,6 +55,50 @@ fi''',
     default_api_base_url = "https://api.openai.com"
     model_env = "CODEX_MODEL"
     stop_hook = "codex"
+
+    def prepare_container(
+        self,
+        backend: ContainerBackend,
+        handle: ContainerHandle,
+        logger: logging.Logger,
+    ) -> None:
+        auth_source = Path(
+            os.environ.get(
+                "SFORGE_CODEX_AUTH_FILE",
+                Path.home() / ".codex" / "auth.json",
+            )
+        ).expanduser().resolve()
+        if not auth_source.is_file():
+            raise RuntimeError(
+                "Codex auth file not found; run `codex` and log in first, or "
+                "set SFORGE_CODEX_AUTH_FILE"
+            )
+
+        try:
+            auth = json.loads(auth_source.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Invalid Codex auth file") from exc
+        if not isinstance(auth, dict) or not auth:
+            raise RuntimeError("Codex auth file must contain a JSON object")
+
+        backend.copy_to_container(
+            handle,
+            auth_source,
+            PurePosixPath("/home/agent/.codex/auth.json"),
+        )
+        result = backend.exec_run(
+            handle,
+            [
+                "/bin/bash",
+                "-lc",
+                "chown -R agent:agent /home/agent/.codex && "
+                "chmod 600 /home/agent/.codex/auth.json",
+            ],
+            user="root",
+        )
+        if result.exit_code != 0:
+            raise RuntimeError(f"Failed to install Codex auth file: {result.output}")
+        logger.info("Copied host Codex auth into the work container")
 
     def augment_env(self, env: dict[str, str], model: str | None) -> None:
         if not self._config.agent_api_base_url:
@@ -70,6 +117,13 @@ fi''',
         cmd = super().format_run_cmd(
             prompt_path, model=model, cwd=cwd, internet=internet, resume=resume,
         )
+
+        if model:
+            cmd = cmd.replace(
+                "codex exec",
+                f"codex exec --model {shlex.quote(model)}",
+                1,
+            )
 
         if not internet:
             cmd = cmd.replace(

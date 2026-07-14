@@ -194,3 +194,52 @@ def rescale_score(spec: RescaleSpec | None, raw_score: float | None) -> float | 
         return 100.0
 
     return _clip(raw)
+
+
+def rescale_score_extended(
+    spec: RescaleSpec | None,
+    raw_score: float | None,
+    *,
+    valid: bool = True,
+) -> float | None:
+    """Return a local diagnostic score with a tiny tail below official zero.
+
+    The official EdgeBench rescale deliberately clips results at zero once a
+    minimization score is worse than its baseline.  That is appropriate for
+    leaderboard comparisons, but it removes all feedback while an agent is
+    still improving a valid, below-baseline solution.  For supported
+    baseline-based minimization curves, map that region into ``(0, 0.01]``.
+
+    This value is intentionally separate from :func:`rescale_score`: it is a
+    local optimization signal, not an official EdgeBench score.
+    """
+    official = rescale_score(spec, raw_score)
+    if (
+        not valid
+        or spec is None
+        or raw_score is None
+        or official is None
+        or not math.isfinite(raw_score)
+        or not math.isfinite(official)
+        or official != 0.0
+    ):
+        return official
+
+    baseline_minimization_kinds = {
+        "min_linear",
+        "min_linear_positive",
+        "log_min",
+        "piecewise_min",
+        "piecewise_log_min",
+    }
+    if (
+        spec.kind not in baseline_minimization_kinds
+        or spec.baseline is None
+        or spec.baseline <= 0.0
+        or raw_score < spec.baseline
+    ):
+        return official
+
+    # 0.01 at the official baseline, decaying toward zero as the raw score
+    # gets worse.  Raw score remains the authoritative ordering signal.
+    return 0.01 * spec.baseline / raw_score

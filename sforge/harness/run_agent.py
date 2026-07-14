@@ -161,7 +161,36 @@ def _install_tools(
     backend.exec_run(handle, "chmod a+x /usr/local/bin/sforge-submit", user="root")
     logger.info("Installed sforge-submit script")
 
-    # 2. Install agent-specific stop hook (unless disabled)
+    # 2. Pi+Goal Plus searches in isolated candidate workspaces.  Install the
+    # EdgeBench-side bridge that materializes a promoted candidate into the
+    # task workspace before invoking the normal synchronous submit command.
+    if getattr(agent, "install_goal_plus_bridge", False):
+        bridge_source = Path(__file__).with_name("goal_plus_bridge.py")
+        backend.copy_to_container(
+            handle,
+            bridge_source,
+            PurePosixPath("/usr/local/bin/sforge-goal-plus-sync"),
+        )
+        bridge_commands = (
+            ["chmod", "a+x", "/usr/local/bin/sforge-goal-plus-sync"],
+            [
+                "ln",
+                "-sf",
+                "/usr/local/bin/sforge-goal-plus-sync",
+                "/usr/local/bin/sforge-goal-plus-submit",
+            ],
+            ["/usr/local/bin/sforge-goal-plus-submit", "--help"],
+        )
+        for command in bridge_commands:
+            result = backend.exec_run(handle, list(command), user="root")
+            if result.exit_code != 0:
+                raise RuntimeError(
+                    "failed to install Goal Plus promotion bridge: "
+                    f"{' '.join(command)}: {result.output}"
+                )
+        logger.info("Installed Goal Plus promotion/submission bridge")
+
+    # 3. Install agent-specific stop hook (unless disabled)
     if not disable_stop_hook:
         agent.install_stop_hook(backend, handle, log_dir, logger)
     else:

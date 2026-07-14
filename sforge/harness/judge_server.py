@@ -368,6 +368,10 @@ class JudgeState:
         if report_dict:
             entry["pass_rate"] = report_dict.get("pass_rate", 0.0)
             entry["score"] = report_dict.get("score")
+            entry["score_0_100"] = report_dict.get("score_0_100")
+            entry["score_0_100_extended"] = report_dict.get(
+                "score_0_100_extended"
+            )
             entry["passed"] = report_dict.get("passed", 0)
             entry["failed"] = report_dict.get("failed", 0)
             entry["total_tests"] = report_dict.get("total_tests", 0)
@@ -472,7 +476,6 @@ class JudgeState:
                 log_dir=sub_log_dir,
             )
             report_dict = report.to_dict()
-            report_dict.pop("score_0_100", None)
             self.submissions[submission_id]["status"] = SubmissionStatus.COMPLETED
             self.submissions[submission_id]["report"] = report_dict
             self._record_submission(log_run_id, submission_id, task_id, round, report_dict, None)

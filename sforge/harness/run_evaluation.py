@@ -36,7 +36,7 @@ from sforge.harness.docker_build import (
     close_logger,
 )
 from sforge.harness.grading import EvalReport, grade_output
-from sforge.harness.score_rescale import rescale_score
+from sforge.harness.score_rescale import rescale_score, rescale_score_extended
 from sforge.harness.task_spec import TaskSpec
 
 
@@ -254,6 +254,11 @@ def judge_submission(
         )
         report.submitted_at = submitted_at
         report.score_0_100 = rescale_score(task_spec.judge.rescale, report.score)
+        report.score_0_100_extended = rescale_score_extended(
+            task_spec.judge.rescale,
+            report.score,
+            valid=report.valid,
+        )
         (log_dir / "report.json").write_text(
             json.dumps(report.to_dict(), indent=2, ensure_ascii=False)
         )

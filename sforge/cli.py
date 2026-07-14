@@ -730,7 +730,15 @@ def cmd_eval(args):
     print(f"  Errors:      {report.errors}")
     print(f"  Pass rate:   {report.pass_rate:.2%}")
     if report.score_0_100 is not None:
-        print(f"  Score 0-100: {report.score_0_100:.2f}")
+        print(f"  Official score 0-100: {report.score_0_100:.6f}")
+    if (
+        report.score_0_100_extended is not None
+        and report.score_0_100_extended != report.score_0_100
+    ):
+        print(
+            "  Local extended score: "
+            f"{report.score_0_100_extended:.6f} (diagnostic only)"
+        )
     print(f"  Runtime:     {report.runtime_seconds:.2f}s")
     print(f"  Timed out:   {report.timed_out}")
 

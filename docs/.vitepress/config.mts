@@ -141,6 +141,7 @@ export default defineConfig({
               text: '参考',
               items: [
                 { text: 'CLI 命令参考', link: '/zh/reference/cli' },
+                { text: 'EdgeBench 成绩换算', link: '/zh/reference/edgebench-score-report' },
                 { text: '故障排除', link: '/zh/reference/troubleshooting' },
               ],
             },

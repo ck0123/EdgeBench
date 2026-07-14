@@ -170,6 +170,9 @@ logs/runs/<run-id>/<task>/final_result.json
 EdgeBench judge 同时记录任务原始分和统一的 `0–100` 换算分。不要直接用原始分
 判断结果好坏；不同任务可能分别采用最大化、最小化、对数或分段换算。
 
+完整命令、参数和输出解释见
+[EdgeBench 成绩换算与官方结果对比](../reference/edgebench-score-report.md)。
+
 运行中或结束后，可直接生成同预算的官方公开结果对比：
 
 ```bash

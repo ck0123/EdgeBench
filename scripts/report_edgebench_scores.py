@@ -21,7 +21,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from sforge.harness.score_rescale import parse_rescale_spec, rescale_score
+from sforge.harness.score_rescale import (
+    parse_rescale_spec,
+    rescale_score,
+    rescale_score_extended,
+)
 
 
 OFFICIAL_HOURS = (2, 4, 6, 8, 10, 12)
@@ -36,6 +40,7 @@ class ScoreObservation:
     state: str
     raw_score: float
     edgebench_score: float
+    edgebench_score_extended: float
     pass_rate: float | None
     source: str
 
@@ -109,6 +114,18 @@ def rescale_raw_score(task: str, raw_score: float) -> float:
     return score
 
 
+def rescale_raw_score_extended(task: str, raw_score: float) -> float:
+    """Return the local diagnostic tail score without changing official scoring."""
+    config = load_task_config(task)
+    spec = parse_rescale_spec(config.get("judge", {}).get("rescale"))
+    score = rescale_score_extended(spec, raw_score)
+    if score is None or not math.isfinite(score):
+        raise ValueError(
+            f"task {task} has no usable extended rescale result for raw score {raw_score}"
+        )
+    return score
+
+
 def _report_sort_key(report: dict[str, Any], direction: str) -> tuple[float, float]:
     normalized = _float_or_none(report.get("score_0_100"))
     raw = _float_or_none(report.get("score"))
@@ -140,12 +157,15 @@ def observation_from_run_dir(run_dir: Path) -> ScoreObservation:
             continue
         if _float_or_none(report.get("score_0_100")) is None:
             report["score_0_100"] = rescale_raw_score(task, raw)
+        if _float_or_none(report.get("score_0_100_extended")) is None:
+            report["score_0_100_extended"] = rescale_raw_score_extended(task, raw)
         reports.append((path, report))
 
     if reports:
         report_path, best = max(reports, key=lambda item: _report_sort_key(item[1], direction))
         raw_score = float(best["score"])
         edgebench_score = float(best["score_0_100"])
+        edgebench_score_extended = float(best["score_0_100_extended"])
         pass_rate = _float_or_none(best.get("pass_rate"))
         source = str(report_path)
     else:
@@ -154,6 +174,7 @@ def observation_from_run_dir(run_dir: Path) -> ScoreObservation:
             raise ValueError(f"no scored submission found in {run_dir}")
         raw_score = raw_score_value
         edgebench_score = rescale_raw_score(task, raw_score)
+        edgebench_score_extended = rescale_raw_score_extended(task, raw_score)
         pass_rate = _float_or_none(final.get("best_pass_rate"))
         source = str(final_path)
 
@@ -164,6 +185,7 @@ def observation_from_run_dir(run_dir: Path) -> ScoreObservation:
         state="final" if final_path.is_file() else "in_progress",
         raw_score=raw_score,
         edgebench_score=edgebench_score,
+        edgebench_score_extended=edgebench_score_extended,
         pass_rate=pass_rate,
         source=source,
     )
@@ -177,6 +199,7 @@ def observation_from_raw(task: str, raw_score: float, model: str | None) -> Scor
         state="provided",
         raw_score=raw_score,
         edgebench_score=rescale_raw_score(task, raw_score),
+        edgebench_score_extended=rescale_raw_score_extended(task, raw_score),
         pass_rate=None,
         source=f"tasks/{task}.json",
     )
@@ -269,12 +292,19 @@ def _fmt_score(value: float | None) -> str:
 
 
 def render_text(result: dict[str, Any]) -> str:
+    edgebench_score = float(result["edgebench_score"])
+    edgebench_score_text = "0.0" if edgebench_score == 0.0 else _fmt_score(edgebench_score)
     lines = [
         f"Task: {result['task']} ({result['state']})",
         f"Run: {result.get('run_id') or '—'}; model: {result.get('model') or '—'}",
         f"Raw score: {_fmt_score(result['raw_score'])}",
-        f"EdgeBench score: {_fmt_score(result['edgebench_score'])}/100",
+        f"EdgeBench score: {edgebench_score_text}/100",
     ]
+    if result["edgebench_score_extended"] != result["edgebench_score"]:
+        lines.append(
+            "Local extended score: "
+            f"{result['edgebench_score_extended']:.9f}/100 (diagnostic only)"
+        )
     if result.get("pass_rate") is not None:
         lines.append(f"Pass rate: {100.0 * result['pass_rate']:.2f}%")
 

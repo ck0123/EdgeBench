@@ -51,3 +51,20 @@ def test_tree_comparison_uses_matching_two_hour_reference() -> None:
     assert comparison["delta_vs_matched_model"] == pytest.approx(-9.376389)
     assert comparison["rank_including_run"] == 4
     assert comparison["rank_population"] == 6
+
+
+def test_vliw_reports_float_tail_below_official_zero() -> None:
+    observation = REPORT.observation_from_raw(
+        "vliw_kernel_optimization", 8593.0, "gpt-5.5"
+    )
+    curves = REPORT.load_official_curves(ROOT / "README.md")
+
+    result = REPORT.build_comparison(observation, curves, budget_hours=2)
+
+    assert result["edgebench_score"] == 0.0
+    assert result["edgebench_score_extended"] == pytest.approx(
+        0.01 * 4475.526541978607 / 8593.0
+    )
+    assert "EdgeBench score: 0.0/100" in REPORT.render_text(result)
+    assert "Local extended score:" in REPORT.render_text(result)
+    assert "(diagnostic only)" in REPORT.render_text(result)

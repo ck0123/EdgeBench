@@ -70,6 +70,9 @@ python scripts/report_edgebench_scores.py --help
 - `Raw score`：judge 返回的任务原始分，只适合在同一个任务内比较；
 - `EdgeBench score`：根据 `tasks/<task>.json` 的官方 rescale 规则得到的统一
   `0–100` 分；
+- `Local extended score`：当有效结果低于官方 baseline、正式分被截为 `0.0` 时，
+  显示一个 `0–0.01` 的浮点尾分用于区分优化进展；它仅是本地诊断值，不参与官方
+  排名或结果对比；
 - `Pass rate`：submission 通过的测试比例（若报告中存在）；
 - `Same model`：公开表中同模型、同时间检查点的参考分；
 - `delta`：当前 EdgeBench 分减去同模型参考分，单位为百分点；
@@ -104,3 +107,9 @@ python scripts/report_edgebench_scores.py --help
 
 成绩报告失败不会删除已经完成的 run；批跑日志会记录失败信息，之后可使用上面的
 `--run-dir` 命令重新生成。
+
+## 长期实验记录
+
+`logs/runs/` 保存完整原始数据，但默认不提交到 Git。需要跨机器或跨会话长期查阅时，
+把实际配置、最终结果和结论写入[本地实验台账](../experiment-records/index.md)。台账按实验拆页，
+不复制逐轮日志，也不得包含认证信息或个人绝对路径。

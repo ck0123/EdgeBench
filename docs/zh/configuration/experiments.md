@@ -54,7 +54,7 @@ tasks:
 
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
-| `agent` | `string` | --- | Agent 名称（`claude-code`、`codex`） |
+| `agent` | `string` | --- | Agent 名称（`claude-code`、`codex`、`codex-goal-plus`、`pi` 或 `pi-goal-plus`） |
 | `model` | `string` | --- | 模型覆盖（在逐任务设置中可覆盖 `model.model`） |
 | `timeout` | `int` | --- | Agent 超时时间（秒） |
 | `eval_interval` | `int` | --- | 自动评测间隔（秒） |

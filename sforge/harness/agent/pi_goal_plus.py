@@ -17,17 +17,17 @@
 from __future__ import annotations
 
 import logging
-import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
+from sforge.harness.agent.goal_plus_runtime import (
+    GOAL_PLUS_CONTAINER_DIR,
+    GOAL_PLUS_STATE_DIR,
+    collect_goal_plus_artifacts,
+    goal_plus_runtime_install_cmds,
+    prepare_goal_plus_container,
+)
 from sforge.harness.agent.pi import PiAgent
 from sforge.harness.backend import ContainerBackend, ContainerHandle
-
-
-GOAL_PLUS_REPOSITORY = "https://github.com/ck0123/goal-plus.git"
-GOAL_PLUS_CONTAINER_DIR = "/opt/goal-plus"
-GOAL_PLUS_STATE_DIR = "/home/agent/.goal-plus"
-PYTHON_CONTAINER_DIR = "/opt/sforge-python"
 
 
 class PiGoalPlusAgent(PiAgent):
@@ -40,69 +40,7 @@ class PiGoalPlusAgent(PiAgent):
     stop_hook = "pi-native-goal-plus"
     install_cmds = [
         *PiAgent.install_cmds,
-        f'''set -euo pipefail
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
-git clone --depth 1 --branch main {GOAL_PLUS_REPOSITORY} "$TMP/goal-plus"
-sudo rm -rf {GOAL_PLUS_CONTAINER_DIR}
-sudo mkdir -p {GOAL_PLUS_CONTAINER_DIR}
-sudo cp -a "$TMP/goal-plus/." {GOAL_PLUS_CONTAINER_DIR}/
-echo "Goal Plus main commit: $(git -C {GOAL_PLUS_CONTAINER_DIR} rev-parse HEAD)"''',
-        r'''PYTHON=""
-for CANDIDATE in \
-    /opt/sforge-python/bin/python3.11 \
-    /opt/sforge-python/bin/python3.10 \
-    /opt/sforge-python/bin/python3; do
-    if [ -x "$CANDIDATE" ] && "$CANDIDATE" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then
-        PYTHON="$CANDIDATE"
-        break
-    fi
-done
-if [ -n "$PYTHON" ]; then
-    :
-elif command -v python3 >/dev/null 2>&1 && python3 -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then
-    PYTHON=$(command -v python3)
-elif command -v python >/dev/null 2>&1 && python -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'; then
-    PYTHON=$(command -v python)
-elif command -v apt-get >/dev/null 2>&1; then
-    if [ -f /etc/apt/sources.list ]; then
-        sudo sed -i \
-          -e 's|http://mirrors.byted.org/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
-          -e 's|http://archive.ubuntu.com/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
-          -e 's|http://security.ubuntu.com/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
-          /etc/apt/sources.list
-    fi
-    sudo -E apt-get update
-    sudo -E env DEBIAN_FRONTEND=noninteractive apt-get install -y python3 python3-pip
-    PYTHON=$(command -v python3)
-    "$PYTHON" -c 'import sys; raise SystemExit(sys.version_info < (3, 10))'
-else
-    curl -fsSL https://astral.sh/uv/0.8.22/install.sh -o /tmp/install-uv.sh
-    sudo env UV_INSTALL_DIR=/usr/local/bin sh /tmp/install-uv.sh
-    sudo env UV_PYTHON_INSTALL_DIR=/opt/uv-python uv python install 3.11
-    PYTHON=$(UV_PYTHON_INSTALL_DIR=/opt/uv-python uv python find 3.11)
-fi
-if ! "$PYTHON" -m pip --version >/dev/null 2>&1; then
-    sudo "$PYTHON" -m ensurepip --upgrade >/dev/null 2>&1 || true
-fi
-if ! "$PYTHON" -m pip --version >/dev/null 2>&1 && command -v apt-get >/dev/null 2>&1; then
-    if [ -f /etc/apt/sources.list ]; then
-        sudo sed -i \
-          -e 's|http://mirrors.byted.org/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
-          -e 's|http://archive.ubuntu.com/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
-          -e 's|http://security.ubuntu.com/ubuntu|https://mirrors.tuna.tsinghua.edu.cn/ubuntu|g' \
-          /etc/apt/sources.list
-    fi
-    sudo -E apt-get update
-    sudo -E env DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip
-    PYTHON=$(command -v python3)
-fi
-"$PYTHON" -m pip --version
-sudo "$PYTHON" -m pip install --disable-pip-version-check \
-  --index-url "${SFORGE_GOAL_PLUS_PYPI_INDEX_URL:-https://pypi.tuna.tsinghua.edu.cn/simple}" \
-  /opt/goal-plus
-sudo ln -sf "$PYTHON" /usr/local/bin/python
-python -c 'import goal_plus' ''',
+        *goal_plus_runtime_install_cmds(),
         r'''mkdir -p ~/.pi/agent/prompts ~/.pi/agent/skills
 cp /opt/goal-plus/.pi/prompts/goal-plus.md ~/.pi/agent/prompts/goal-plus.md
 rm -rf ~/.pi/agent/skills/goal-plus
@@ -117,8 +55,15 @@ mkdir -p /home/agent/.goal-plus''',
         '--provider openai-codex --model "$PI_MODEL" '
         '"/goal-plus $(cat {prompt_file})\n\n'
         'Use the Goal Plus framework to perform deep search optimization for this task.\n'
-        'For the initial frozen SearchSpec, set budget.max_candidates to 15 and '
-        'budget.max_parallel to 3.\n'
+        'For the initial frozen SearchSpec, set budget.max_parallel to 3 and '
+        'choose budget.max_candidates yourself from the remaining task time and '
+        'the search plan. Prefer a small number of serious directions and deep '
+        'reinvestment over shallow breadth. Set strategy.worker_budget to '
+        '{{"max_runtime_seconds": 1200, "max_turns": 40, '
+        '"on_exceed": "interrupt"}}; this is the normal first-round budget for '
+        'each candidate worker, not a cap on justified reinvestment. If a '
+        'first-round proposal is already a particularly valuable macro direction, '
+        'you may give it a larger one-dispatch worker_budgets entry.\n'
         'The total exploration time budget for this task is '
         '${{SFORGE_AGENT_TOTAL_BUDGET_SECONDS}} seconds. The hard deadline is Unix '
         'timestamp ${{SFORGE_AGENT_DEADLINE}}, and ${{REMAINING}} seconds remain at '
@@ -126,7 +71,11 @@ mkdir -p /home/agent/.goal-plus''',
         '/opt/sforge-agent-deadline. Use this time information to decide the '
         'search budget, number of rounds, and final-verification time yourself; '
         'no round count is prescribed. Refresh the remaining time before deciding '
-        'whether to start each next search round.\n\n'
+        'whether to start each next search round. After every completed batch, '
+        'inspect each candidate research_summary and verifier trajectory. '
+        'Selectively redispatch valuable directions with an explicit larger '
+        'one-dispatch worker_budget; do not give every candidate the same extra '
+        'time and do not stop a promising worker merely after a few artifacts.\n\n'
         'EdgeBench integration requirement: Goal Plus candidate workspaces are '
         'isolated from the main task workspace. After every search_promote call, '
         'the outer/main Pi session must run sforge-goal-plus-submit --details. '
@@ -152,9 +101,16 @@ mkdir -p /home/agent/.goal-plus''',
         '${SFORGE_AGENT_TOTAL_BUDGET_SECONDS} seconds; the hard deadline is Unix '
         'timestamp ${SFORGE_AGENT_DEADLINE}, and ${REMAINING} seconds remain now. '
         'If the initial SearchSpec has not been frozen yet, set '
-        'budget.max_candidates to 15 and budget.max_parallel to 3. '
+        'budget.max_parallel to 3, choose budget.max_candidates yourself from '
+        'the remaining task time and a depth-first search plan, and set '
+        'strategy.worker_budget to {"max_runtime_seconds": 1200, '
+        '"max_turns": 40, "on_exceed": "interrupt"}. Treat 1200 seconds as '
+        'the normal first-round worker budget, not a reinvestment cap. '
         'Use the current remaining time to choose the next search work yourself; '
-        'no round count is prescribed. After every search_promote, run '
+        'no round count is prescribed. After every completed batch, inspect '
+        'research_summary and verifier trajectories, then selectively redispatch '
+        'valuable directions with a larger one-dispatch worker_budget. After every '
+        'search_promote, run '
         'sforge-goal-plus-submit --details from the outer/main session and require '
         'a successful Judge result before recording or completing the search."'
     )
@@ -166,25 +122,7 @@ mkdir -p /home/agent/.goal-plus''',
         logger: logging.Logger,
     ) -> None:
         super().prepare_container(backend, handle, logger)
-
-        python_source = os.environ.get("SFORGE_GOAL_PLUS_PYTHON_DIR")
-        if not python_source:
-            return
-        python_path = Path(python_source).expanduser().resolve()
-        python_candidates = tuple(
-            python_path / "bin" / name
-            for name in ("python3.11", "python3.10", "python3")
-        )
-        if not any(candidate.is_file() for candidate in python_candidates):
-            raise RuntimeError(
-                "SFORGE_GOAL_PLUS_PYTHON_DIR does not contain a supported "
-                "Python 3.10+ executable under bin/: "
-                f"{python_path}"
-            )
-        backend.copy_to_container(
-            handle, python_path, PurePosixPath(PYTHON_CONTAINER_DIR)
-        )
-        logger.info("Copied portable Python from %s", python_path)
+        prepare_goal_plus_container(backend, handle, logger)
 
     def install_stop_hook(
         self,
@@ -202,6 +140,7 @@ mkdir -p /home/agent/.goal-plus''',
         super().augment_env(env, model)
         env["GOAL_PLUS_SOURCE_PATH"] = GOAL_PLUS_CONTAINER_DIR
         env["GOAL_PLUS_ROOT"] = GOAL_PLUS_STATE_DIR
+        env["GOAL_PLUS_ROLE"] = "main"
         env["GOAL_PLUS_PI_ROLE"] = "main"
         if model:
             env["GOAL_PLUS_PI_MODEL"] = f"openai-codex/{model}"
@@ -213,12 +152,4 @@ mkdir -p /home/agent/.goal-plus''',
         log_dir: Path,
         logger: logging.Logger,
     ) -> None:
-        try:
-            archive = backend.copy_from_container(
-                handle, PurePosixPath(GOAL_PLUS_STATE_DIR)
-            )
-            if archive:
-                (log_dir / "goal-plus-state.tar").write_bytes(archive)
-                logger.info("Collected Goal Plus state: %d bytes", len(archive))
-        except Exception as exc:
-            logger.warning("Failed to collect Goal Plus state: %s", exc)
+        collect_goal_plus_artifacts(backend, handle, log_dir, logger)

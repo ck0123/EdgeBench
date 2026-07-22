@@ -54,6 +54,10 @@ SForge 大部分配置可通过 `SFORGE_*` 环境变量注入；仅 CLI/YAML 支
 | `SFORGE_NODEJS_MIRROR_URL` | Node.js 下载镜像源（Agent 运行时安装使用） |
 | `SFORGE_NPM_REGISTRY_URL` | NPM 仓库镜像（容器内设置 `npm_config_registry`） |
 | `SFORGE_CLAUDE_CACHE_OPT` | 抑制 Claude Code 归属头和动态系统提示词段落，以便在第三方代理上获得更好的缓存命中率。设置为 `1` 启用。 |
+| `SFORGE_CODEX_AUTH_FILE` | Codex/Codex + Goal Plus 使用的宿主机 `auth.json`；默认 `~/.codex/auth.json`。文件只在运行时复制，不写入日志或提交。 |
+| `SFORGE_PI_AUTH_FILE` | Pi/Pi + Goal Plus 使用的宿主机 `auth.json`；默认 `~/.pi/agent/auth.json`。 |
+| `SFORGE_GOAL_PLUS_REF` | Pi/Codex Goal Plus worker 容器安装的 Git branch 或 tag。 |
+| `SFORGE_GOAL_PLUS_PYTHON_DIR` | 可选的宿主机便携 Python 3.10+ 目录，用于避免容器内额外下载 Python。 |
 
 ::: warning 运行时直接代理
 把 `SFORGE_HTTP_PROXY` / `SFORGE_HTTPS_PROXY` 直接注入 Agent 容器，会让容器通过代理获得网络访问能力。这个方式只适合极少数运行时下载依赖的场景，**不推荐**用于 LLM API 访问。

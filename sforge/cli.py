@@ -940,7 +940,7 @@ def main():
                        help="Path to experiment YAML config file (model config + per-task overrides)")
     p_run.add_argument(
         "--agent", default=None,
-        help="Agent name (claude-code, codex, pi, pi-goal-plus)",
+        help="Agent name (claude-code, codex, codex-goal-plus, pi, pi-goal-plus)",
     )
     p_run.add_argument("--model", default=None, help="Model override")
     p_run.add_argument("--timeout", type=int, default=None, help="Agent timeout in seconds")

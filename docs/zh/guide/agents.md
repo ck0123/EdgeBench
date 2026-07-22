@@ -4,19 +4,29 @@ SForge 通过插件式的 Agent 注册表管理不同的 Code Agent。运行 Edg
 
 ## Agent 注册表
 
-SForge 内置了 2 种 Agent：
+SForge 内置了 5 种 Agent：
 
 | Agent 名称 | CLI 名称 | API Key 环境变量 | 模型环境变量 | 默认模型 | Stop Hook | Auto-Resume |
 |-----------|----------|-----------------|-------------|---------|-----------|-------------|
 | Claude Code | `claude-code` | `ANTHROPIC_AUTH_TOKEN` | `ANTHROPIC_MODEL` | — | 支持 | 支持 |
 | Codex | `codex` | `CODEX_API_KEY` | `CODEX_MODEL` | — | 支持 | 支持 |
+| Codex + Goal Plus | `codex-goal-plus` | Codex `auth.json` | `CODEX_MODEL` | — | Goal Plus 项目 hook | 支持 |
+| Pi | `pi` | Pi `auth.json` | `PI_MODEL` | — | — | 支持 |
+| Pi + Goal Plus | `pi-goal-plus` | Pi `auth.json` | `PI_MODEL` | — | Goal Plus Pi hook | 支持 |
 
 使用 `--agent` 参数指定要运行的 Agent：
 
 ```bash
 sforge run --task ad_placement_optimization --agent claude-code
 sforge run --task ad_placement_optimization --agent codex
+sforge run --task ad_placement_optimization --agent codex-goal-plus --model gpt-5.5
 ```
+
+`codex-goal-plus` 从宿主机复制 `${SFORGE_CODEX_AUTH_FILE:-~/.codex/auth.json}`，
+在 Work 容器中安装 `SFORGE_GOAL_PLUS_REF` 指定的 Goal Plus 版本，并使用 Codex
+原生多 Agent rolling pool。候选 workspace 相互隔离；main agent 在 promote 后通过
+`sforge-goal-plus-submit` 将提交文件同步到主 workspace，再同步获取 Judge 结果。
+默认 Goal Plus 分支为 `experiment/async-research-flow`，正式实验建议显式设置 ref。
 
 ## Agent 配置
 
@@ -85,6 +95,8 @@ Stop Hook 是 SForge 的一个重要机制，用于阻止 Agent 提前退出。
 |-------|----------|------|
 | `claude-code` | Claude Code Stop Hook | 通过 `.claude/settings.json` 注册 |
 | `codex` | Codex Stop Hook | 通过 `/etc/codex/hooks.json` 注册 |
+| `codex-goal-plus` | Goal Plus Codex Hooks | 通过任务 workspace 的 `.codex/hooks.json` 注册 |
+| `pi-goal-plus` | Goal Plus Pi Hook | 通过 Pi extension 的 `agent_end` 事件注册 |
 
 ### 禁用 Stop Hook
 
@@ -112,6 +124,8 @@ Auto-Resume 处理的是 **Agent 异常退出** 的情况（如 API 断连、瞬
 |-------|---------|
 | `claude-code` | `claude --continue -p "Continue working."` |
 | `codex` | `codex exec resume --last "Continue working."` |
+| `codex-goal-plus` | promotion bridge 检查后执行 `codex exec resume --last` |
+| `pi` / `pi-goal-plus` | Pi continuation；Goal Plus 状态从持久化 runtime 恢复 |
 
 ### 安全保护
 

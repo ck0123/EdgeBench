@@ -23,10 +23,12 @@ Environment overrides:
   SFORGE_ENV_FILE    Private env file to source (default: ~/.config/sforge/agent.env)
   SFORGE_PI_AUTH_FILE
                       Pi auth file (default: ~/.pi/agent/auth.json)
+  SFORGE_GOAL_PLUS_REF
+                      Goal Plus git ref (default: experiment/async-research-flow)
 
 The script adapts a localhost HTTP(S) proxy to host.docker.internal for work
 containers. Node.js and npm default to npmmirror. Goal Plus is downloaded from
-the latest upstream main branch; host Goal Plus checkouts are not copied.
+the configured upstream ref; host Goal Plus checkouts are not copied.
 EOF
 }
 

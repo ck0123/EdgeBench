@@ -122,6 +122,9 @@ sforge serve --host 0.0.0.0 --port 9090
 # 标准 Agent 模式
 sforge run --task ad_placement_optimization --agent claude-code
 
+# Codex + Goal Plus
+sforge run --task ad_placement_optimization --agent codex-goal-plus --model gpt-5.5
+
 # 多任务并行运行
 sforge run --task ad_placement_optimization gitlet rookiedb --agent claude-code
 
@@ -134,7 +137,7 @@ sforge run --experiment experiment.yaml
 | 选项 | 默认值 | 说明 |
 |------|--------|------|
 | `--task` | 必填* | 一个或多个任务 ID（空格分隔）。多任务时完全并行运行。 |
-| `--agent` | 必填* | Agent 名称（如 `claude-code`、`codex`）。除非指定 `--experiment`，否则必填。 |
+| `--agent` | 必填* | Agent 名称（`claude-code`、`codex`、`codex-goal-plus`、`pi` 或 `pi-goal-plus`）。除非指定 `--experiment`，否则必填。 |
 | `--experiment` | --- | 实验 YAML 配置文件路径。如果未指定 `--task`，运行 YAML 中的全部任务；如果指定了 `--task`，则只运行该子集并套用实验配置。 |
 | `--model` | --- | 模型覆盖（如 `claude-opus-4-8`） |
 | `--timeout` | `3600` | Agent 超时时间（秒） |

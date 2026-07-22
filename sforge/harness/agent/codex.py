@@ -26,12 +26,27 @@ from sforge.harness.agent.base import Agent
 from sforge.harness.backend import ContainerBackend, ContainerHandle
 
 
+CODEX_CLI_VERSION = "0.144.1"
+CODEX_REASONING_EFFORT_ENV = "SFORGE_CODEX_REASONING_EFFORT"
+DEFAULT_CODEX_REASONING_EFFORT = "medium"
+SUPPORTED_CODEX_REASONING_EFFORTS = frozenset(
+    {"none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"}
+)
+CODEX_LINUX_RUNTIME_CACHE = (
+    Path.home()
+    / ".cache"
+    / "sforge"
+    / "codex"
+    / f"codex-{CODEX_CLI_VERSION}-linux-x64.tgz"
+)
+
+
 class CodexAgent(Agent):
 
     name = "codex"
     install_cmds = [
-        "sudo -E bash -c 'NODE_MIRROR=${SFORGE_NODEJS_MIRROR_URL:-https://nodejs.org/dist} && curl -fsSL $NODE_MIRROR/v20.18.0/node-v20.18.0-linux-x64.tar.xz | tar -xJ -C /usr/local --strip-components=1'",
-        "sudo -E npm install -g @openai/codex@0.144.1",
+        "command -v codex >/dev/null 2>&1 && codex --version || sudo -E bash -c 'NODE_MIRROR=${SFORGE_NODEJS_MIRROR_URL:-https://nodejs.org/dist} && curl -fsSL $NODE_MIRROR/v20.18.0/node-v20.18.0-linux-x64.tar.xz | tar -xJ -C /usr/local --strip-components=1'",
+        f"command -v codex >/dev/null 2>&1 && codex --version || sudo -E npm install -g @openai/codex@{CODEX_CLI_VERSION}",
         '''if [ -n "$OPENAI_BASE_URL" ]; then
     mkdir -p ~/.codex
     cat > ~/.codex/config.toml << EOF
@@ -100,6 +115,55 @@ fi''',
             raise RuntimeError(f"Failed to install Codex auth file: {result.output}")
         logger.info("Copied host Codex auth into the work container")
 
+        runtime_override = os.environ.get("SFORGE_CODEX_RUNTIME_ARCHIVE")
+        if runtime_override is not None:
+            runtime_archive = (
+                Path(runtime_override).expanduser().resolve()
+                if runtime_override.strip()
+                else None
+            )
+            if runtime_archive is not None and not runtime_archive.is_file():
+                raise RuntimeError(
+                    f"Codex Linux runtime archive not found: {runtime_archive}"
+                )
+        else:
+            runtime_archive = (
+                CODEX_LINUX_RUNTIME_CACHE.resolve()
+                if CODEX_LINUX_RUNTIME_CACHE.is_file()
+                else None
+            )
+
+        if runtime_archive is not None:
+            container_archive = PurePosixPath("/tmp/sforge-codex-linux-x64.tgz")
+            backend.copy_to_container(
+                handle,
+                runtime_archive,
+                container_archive,
+            )
+            install_runtime_cmd = r"""
+set -euo pipefail
+RUNTIME_ROOT=/opt/sforge-codex
+rm -rf "$RUNTIME_ROOT"
+mkdir -p "$RUNTIME_ROOT"
+tar -xzf /tmp/sforge-codex-linux-x64.tgz \
+    -C "$RUNTIME_ROOT" --strip-components=1
+TARGET=x86_64-unknown-linux-musl
+CODEX_BIN="$RUNTIME_ROOT/vendor/$TARGET/bin/codex"
+test -x "$CODEX_BIN"
+ln -sfn "$CODEX_BIN" /usr/local/bin/codex
+codex --version
+"""
+            result = backend.exec_run(
+                handle,
+                ["/bin/bash", "-lc", install_runtime_cmd],
+                user="root",
+            )
+            if result.exit_code != 0:
+                raise RuntimeError(
+                    f"Failed to install cached Codex Linux runtime: {result.output}"
+                )
+            logger.info("Copied cached Codex Linux runtime into the work container")
+
     def augment_env(self, env: dict[str, str], model: str | None) -> None:
         if not self._config.agent_api_base_url:
             if "OPENAI_API_KEY" in env and "CODEX_API_KEY" not in env:
@@ -124,6 +188,25 @@ fi''',
                 f"codex exec --model {shlex.quote(model)}",
                 1,
             )
+
+        reasoning_effort = os.environ.get(
+            CODEX_REASONING_EFFORT_ENV,
+            DEFAULT_CODEX_REASONING_EFFORT,
+        ).strip().lower()
+        if reasoning_effort not in SUPPORTED_CODEX_REASONING_EFFORTS:
+            supported = ", ".join(sorted(SUPPORTED_CODEX_REASONING_EFFORTS))
+            raise ValueError(
+                f"Invalid {CODEX_REASONING_EFFORT_ENV}={reasoning_effort!r}; "
+                f"expected one of: {supported}"
+            )
+        reasoning_override = shlex.quote(
+            f'model_reasoning_effort="{reasoning_effort}"'
+        )
+        cmd = cmd.replace(
+            "codex exec",
+            f"codex exec -c {reasoning_override}",
+            1,
+        )
 
         if not internet:
             cmd = cmd.replace(
@@ -157,46 +240,7 @@ fi''',
             local_hooks,
             PurePosixPath("/etc/codex/hooks.json"),
         )
-
-        config_append = _generate_codex_config_append()
-        local_config_append = log_dir / "_codex_config_append.toml"
-        local_config_append.write_text(config_append)
-        backend.copy_to_container(
-            handle,
-            local_config_append,
-            PurePosixPath("/tmp/sforge-codex-config-append.toml"),
-        )
-
-        enable_hooks_cmd = r"""
-set -e
-CONFIG=/home/agent/.codex/config.toml
-TMP=$(mktemp)
-mkdir -p /home/agent/.codex
-touch "$CONFIG"
-if grep -Eq '^[[:space:]]*hooks[[:space:]]*=' "$CONFIG"; then
-    sed -E 's/^[[:space:]]*hooks[[:space:]]*=.*/hooks = true/' "$CONFIG" > "$TMP"
-elif grep -Eq '^[[:space:]]*\[features\][[:space:]]*$' "$CONFIG"; then
-    awk '
-        /^[[:space:]]*\[features\][[:space:]]*$/ {
-            print
-            print "hooks = true"
-            next
-        }
-        { print }
-    ' "$CONFIG" > "$TMP"
-else
-    cp "$CONFIG" "$TMP"
-    cat /tmp/sforge-codex-config-append.toml >> "$TMP"
-fi
-mv "$TMP" "$CONFIG"
-chown -R agent:agent /home/agent/.codex
-"""
-        result = backend.exec_run(
-            handle, ["/bin/bash", "-lc", enable_hooks_cmd], user="root",
-        )
-        if result.exit_code != 0:
-            raise RuntimeError(f"Failed to configure Codex hooks: {result.output}")
-        logger.info("Configured Codex hooks")
+        _enable_codex_hooks(backend, handle, log_dir, logger)
 
 
 # ---------------------------------------------------------------------------
@@ -233,3 +277,52 @@ def _generate_codex_hooks(hook_path: str) -> str:
 
 def _generate_codex_config_append() -> str:
     return """\n[features]\nhooks = true\n"""
+
+
+def _enable_codex_hooks(
+    backend: ContainerBackend,
+    handle: ContainerHandle,
+    log_dir: Path,
+    logger: logging.Logger,
+) -> None:
+    """Enable Codex hooks without choosing which hook file supplies them."""
+
+    config_append = _generate_codex_config_append()
+    local_config_append = log_dir / "_codex_config_append.toml"
+    local_config_append.write_text(config_append)
+    backend.copy_to_container(
+        handle,
+        local_config_append,
+        PurePosixPath("/tmp/sforge-codex-config-append.toml"),
+    )
+
+    enable_hooks_cmd = r"""
+set -e
+CONFIG=/home/agent/.codex/config.toml
+TMP=$(mktemp)
+mkdir -p /home/agent/.codex
+touch "$CONFIG"
+if grep -Eq '^[[:space:]]*hooks[[:space:]]*=' "$CONFIG"; then
+    sed -E 's/^[[:space:]]*hooks[[:space:]]*=.*/hooks = true/' "$CONFIG" > "$TMP"
+elif grep -Eq '^[[:space:]]*\[features\][[:space:]]*$' "$CONFIG"; then
+    awk '
+        /^[[:space:]]*\[features\][[:space:]]*$/ {
+            print
+            print "hooks = true"
+            next
+        }
+        { print }
+    ' "$CONFIG" > "$TMP"
+else
+    cp "$CONFIG" "$TMP"
+    cat /tmp/sforge-codex-config-append.toml >> "$TMP"
+fi
+mv "$TMP" "$CONFIG"
+chown -R agent:agent /home/agent/.codex
+"""
+    result = backend.exec_run(
+        handle, ["/bin/bash", "-lc", enable_hooks_cmd], user="root",
+    )
+    if result.exit_code != 0:
+        raise RuntimeError(f"Failed to configure Codex hooks: {result.output}")
+    logger.info("Configured Codex hooks")

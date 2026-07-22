@@ -28,7 +28,7 @@ title: "Pi + Goal Plus 夜间顺序运行配置"
 | C++ task 的 Python | 清华 Ubuntu 镜像提供 Python 3.10 |
 | Python task 的 Python | 复用 work image 自带版本 |
 | Python 包 | 清华 PyPI 镜像 |
-| Goal Plus 来源 | 每个新 worker 容器启动时 shallow clone 上游 `main` |
+| Goal Plus 来源 | 每个新 worker 容器启动时 shallow clone `SFORGE_GOAL_PLUS_REF`；本地实验默认 `experiment/async-research-flow` |
 
 执行顺序如下：
 
@@ -169,7 +169,7 @@ caffeinate -dimsu ./scripts/run_pi_goal_plus_overnight.sh \
 
 ```text
 Copied host Pi openai-codex login into the work container
-Install step 4/6: ... git clone --depth 1 --branch main ...
+Install step 4/6: ... git clone --depth 1 --branch experiment/async-research-flow ...
 Agent installation complete
 Goal Plus stop gate is provided by the Pi extension's native agent_end hook
 Agent time budget installed: total=7200s, deadline=<unix-timestamp>

@@ -1,0 +1,155 @@
+# Copyright (c) 2026 ByteDance Ltd. and/or its affiliates
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Codex coding agent with Goal Plus project assets and lifecycle hooks."""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+from sforge.harness.agent.codex import CodexAgent, _enable_codex_hooks
+from sforge.harness.agent.goal_plus_runtime import (
+    GOAL_PLUS_CONTAINER_DIR,
+    GOAL_PLUS_STATE_DIR,
+    collect_goal_plus_artifacts,
+    goal_plus_runtime_install_cmds,
+    prepare_goal_plus_container,
+)
+from sforge.harness.backend import ContainerBackend, ContainerHandle
+
+
+class CodexGoalPlusAgent(CodexAgent):
+    """Run the normal EdgeBench prompt through Codex's Goal Plus skill."""
+
+    name = "codex-goal-plus"
+    install_goal_plus_bridge = True
+    stop_hook = "codex-native-goal-plus"
+    install_cmds = [
+        *CodexAgent.install_cmds,
+        *goal_plus_runtime_install_cmds(),
+        rf'''set -euo pipefail
+TASK_ROOT="${{SFORGE_PATCH_DIR:?}}"
+CODEX_DIR="$TASK_ROOT/.codex"
+mkdir -p "$CODEX_DIR/skills" "$CODEX_DIR/agents" {GOAL_PLUS_STATE_DIR}
+cp {GOAL_PLUS_CONTAINER_DIR}/.codex/config.example.toml "$CODEX_DIR/config.toml"
+sed -i 's|args = \["--root", ".gp"\]|args = ["--root", "{GOAL_PLUS_STATE_DIR}"]|' "$CODEX_DIR/config.toml"
+cp {GOAL_PLUS_CONTAINER_DIR}/.codex/hooks.json "$CODEX_DIR/hooks.json"
+for SKILL in goal-plus goal-plus-with-final-check search; do
+    rm -rf "$CODEX_DIR/skills/$SKILL"
+    cp -a "{GOAL_PLUS_CONTAINER_DIR}/.codex/skills/$SKILL" "$CODEX_DIR/skills/$SKILL"
+done
+for AGENT in search_candidate_agent goal_plus_final_checker; do
+    cp "{GOAL_PLUS_CONTAINER_DIR}/.codex/agents/$AGENT.toml" "$CODEX_DIR/agents/$AGENT.toml"
+done
+test -s "$CODEX_DIR/config.toml"
+test -s "$CODEX_DIR/hooks.json"
+test -s "$CODEX_DIR/skills/goal-plus/SKILL.md"
+test -s "$CODEX_DIR/skills/search/SKILL.md"
+test -s "$CODEX_DIR/agents/search_candidate_agent.toml"
+grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"''',
+    ]
+    run_cmd = (
+        'export GOAL_PLUS_OUTER_DEADLINE_AT="$SFORGE_AGENT_DEADLINE"; '
+        'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
+        'exec codex exec --dangerously-bypass-approvals-and-sandbox '
+        '"\\$goal-plus mode=autonomous $(cat {prompt_file})\n\n'
+        'Use the Goal Plus framework to perform deep search optimization for this task. '
+        'For the initial frozen SearchSpec, set strategy.worker_host to codex and '
+        'budget.max_parallel to 3. Choose budget.max_candidates yourself from the '
+        'remaining task time and the search plan. Prefer a small number of serious '
+        'directions and deep reinvestment over shallow breadth. Set '
+        'strategy.worker_budget to {{\"max_runtime_seconds\": 1200, '
+        '\"max_turns\": 40, \"on_exceed\": \"interrupt\"}}; this is the '
+        'normal first-dispatch budget for each candidate worker, not a cap on '
+        'justified reinvestment.\n'
+        'The total exploration time budget for this task is '
+        '${{SFORGE_AGENT_TOTAL_BUDGET_SECONDS}} seconds. The hard deadline is Unix '
+        'timestamp ${{SFORGE_AGENT_DEADLINE}}, and ${{REMAINING}} seconds remain at '
+        'this launch. The authoritative deadline is also available in '
+        '/opt/sforge-agent-deadline. Refresh the remaining time before each '
+        'rolling-pool decision and reserve time for final verification, selection, '
+        'promotion, and Judge feedback. No round count is prescribed.\n\n'
+        'EdgeBench integration requirement: Goal Plus candidate workspaces are '
+        'isolated from the main task workspace. After every search_promote call, '
+        'the outer/main Codex session must run sforge-goal-plus-submit --details. '
+        'That command atomically copies the selected candidate submitted files '
+        'into the main workspace, verifies their hashes, then synchronously calls '
+        'the Judge and returns its raw score, official 0-100 score, validity, and '
+        'test details. Never call it from a candidate worker. Do not record the '
+        'search result or mark the goal complete when this command fails. Use the '
+        'returned Judge result when deciding whether another search task is needed."'
+    )
+    resume_cmd = (
+        'export GOAL_PLUS_OUTER_DEADLINE_AT="$SFORGE_AGENT_DEADLINE"; '
+        'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
+        'SYNC_OUTPUT=$(sforge-goal-plus-submit --details --if-new 2>&1); '
+        'SYNC_STATUS=$?; '
+        'exec codex exec resume --last --dangerously-bypass-approvals-and-sandbox '
+        '"Continue the active Goal Plus task. Before this resume, the EdgeBench '
+        'Goal Plus promotion bridge returned exit status ${SYNC_STATUS}:\n'
+        '${SYNC_OUTPUT}\n\nThe total exploration time budget is '
+        '${SFORGE_AGENT_TOTAL_BUDGET_SECONDS} seconds; the hard deadline is Unix '
+        'timestamp ${SFORGE_AGENT_DEADLINE}, and ${REMAINING} seconds remain. '
+        'Restore the durable Goal Plus and Search state, then continue the Codex '
+        'rolling worker pool. If the initial SearchSpec has not been frozen yet, '
+        'set strategy.worker_host to codex, budget.max_parallel to 3, choose '
+        'budget.max_candidates from the remaining time, and set '
+        'strategy.worker_budget to {\"max_runtime_seconds\": 1200, '
+        '\"max_turns\": 40, \"on_exceed\": \"interrupt\"}. After every '
+        'search_promote, run sforge-goal-plus-submit --details from the outer/main '
+        'session and require a successful Judge result before recording or '
+        'completing the search."'
+    )
+
+    def prepare_container(
+        self,
+        backend: ContainerBackend,
+        handle: ContainerHandle,
+        logger: logging.Logger,
+    ) -> None:
+        super().prepare_container(backend, handle, logger)
+        prepare_goal_plus_container(backend, handle, logger)
+
+    def install_stop_hook(
+        self,
+        backend: ContainerBackend,
+        handle: ContainerHandle,
+        log_dir: Path,
+        logger: logging.Logger,
+    ) -> None:
+        """Enable the project-local Goal Plus hooks, not Codex's generic blocker."""
+
+        _enable_codex_hooks(backend, handle, log_dir, logger)
+        logger.info(
+            "Goal Plus stop gate is provided by Codex project hooks in the task workspace"
+        )
+
+    def augment_env(self, env: dict[str, str], model: str | None) -> None:
+        super().augment_env(env, model)
+        env["GOAL_PLUS_SOURCE_PATH"] = GOAL_PLUS_CONTAINER_DIR
+        env["GOAL_PLUS_ROOT"] = GOAL_PLUS_STATE_DIR
+        env["GOAL_PLUS_ROLE"] = "main"
+        env["GOAL_PLUS_CODEX_ROLE"] = "main"
+        if model:
+            env["GOAL_PLUS_CODEX_MODEL"] = model
+
+    def collect_artifacts(
+        self,
+        backend: ContainerBackend,
+        handle: ContainerHandle,
+        log_dir: Path,
+        logger: logging.Logger,
+    ) -> None:
+        collect_goal_plus_artifacts(backend, handle, log_dir, logger)

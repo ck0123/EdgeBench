@@ -38,14 +38,18 @@ def goal_plus_runtime_install_cmds() -> list[str]:
 
     return [
         f'''set -euo pipefail
-TMP=$(mktemp -d)
-trap 'rm -rf "$TMP"' EXIT
-GOAL_PLUS_REF={shlex.quote(GOAL_PLUS_REF)}
-git clone --depth 1 --branch "$GOAL_PLUS_REF" {GOAL_PLUS_REPOSITORY} "$TMP/goal-plus"
-sudo rm -rf {GOAL_PLUS_CONTAINER_DIR}
-sudo mkdir -p {GOAL_PLUS_CONTAINER_DIR}
-sudo cp -a "$TMP/goal-plus/." {GOAL_PLUS_CONTAINER_DIR}/
-echo "Goal Plus ref: $GOAL_PLUS_REF"
+if [ -f {GOAL_PLUS_CONTAINER_DIR}/pyproject.toml ]; then
+    echo "Using controller-provided Goal Plus source"
+else
+    TMP=$(mktemp -d)
+    trap 'rm -rf "$TMP"' EXIT
+    GOAL_PLUS_REF={shlex.quote(GOAL_PLUS_REF)}
+    git clone --depth 1 --branch "$GOAL_PLUS_REF" {GOAL_PLUS_REPOSITORY} "$TMP/goal-plus"
+    sudo rm -rf {GOAL_PLUS_CONTAINER_DIR}
+    sudo mkdir -p {GOAL_PLUS_CONTAINER_DIR}
+    sudo cp -a "$TMP/goal-plus/." {GOAL_PLUS_CONTAINER_DIR}/
+    echo "Goal Plus ref: $GOAL_PLUS_REF"
+fi
 echo "Goal Plus commit: $(git -C {GOAL_PLUS_CONTAINER_DIR} rev-parse HEAD)"''',
         r'''PYTHON=""
 for CANDIDATE in \
@@ -110,7 +114,20 @@ def prepare_goal_plus_container(
     handle: ContainerHandle,
     logger: logging.Logger,
 ) -> None:
-    """Copy an optional portable Python runtime before install commands run."""
+    """Copy pinned Goal Plus source and an optional portable Python runtime."""
+
+    source = os.environ.get("SFORGE_GOAL_PLUS_SOURCE_DIR")
+    if source:
+        source_path = Path(source).expanduser().resolve()
+        if not (source_path / "pyproject.toml").is_file():
+            raise RuntimeError(
+                "SFORGE_GOAL_PLUS_SOURCE_DIR is not a Goal Plus checkout: "
+                f"{source_path}"
+            )
+        backend.copy_to_container(
+            handle, source_path, PurePosixPath(GOAL_PLUS_CONTAINER_DIR)
+        )
+        logger.info("Copied pinned Goal Plus source from %s", source_path)
 
     python_source = os.environ.get("SFORGE_GOAL_PLUS_PYTHON_DIR")
     if not python_source:

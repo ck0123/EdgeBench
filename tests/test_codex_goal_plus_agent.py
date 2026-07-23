@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 import subprocess
+from pathlib import Path
 
 from sforge.harness.agent.codex_goal_plus import CodexGoalPlusAgent
 from sforge.harness.agent.codex_goal_plus_solo import CodexGoalPlusSoloAgent
 from sforge.harness.agent.factory import get_agent_class
+from sforge.harness.agent.goal_plus_runtime import prepare_goal_plus_container
 from sforge.harness.agent.pi_goal_plus import PiGoalPlusAgent
 from sforge.harness.backend.base import ExecResult
 from sforge.harness.config import SForgeConfig
@@ -32,6 +34,7 @@ def test_codex_goal_plus_installs_shared_runtime_and_codex_assets() -> None:
     assert "/opt/goal-plus/.codex/agents/$AGENT.toml" in commands
     assert 'args = ["--root", "/home/agent/.goal-plus"]' in commands
     assert "/opt/goal-plus/.pi/extensions/goal-plus.ts" not in commands
+    assert "Using controller-provided Goal Plus source" in commands
 
 
 def test_goal_plus_hosts_share_runtime_bootstrap_commands() -> None:
@@ -151,6 +154,31 @@ def test_codex_goal_plus_sets_shared_state_environment() -> None:
     assert env["GOAL_PLUS_ROLE"] == "main"
     assert env["GOAL_PLUS_CODEX_ROLE"] == "main"
     assert env["GOAL_PLUS_CODEX_MODEL"] == "gpt-5.5"
+
+
+def test_codex_goal_plus_can_copy_pinned_controller_source(
+    tmp_path, monkeypatch
+) -> None:
+    source = tmp_path / "goal-plus"
+    source.mkdir()
+    (source / "pyproject.toml").write_text("[project]\nname='goal-plus'\n")
+    monkeypatch.setenv("SFORGE_GOAL_PLUS_SOURCE_DIR", str(source))
+
+    class FakeBackend:
+        def __init__(self) -> None:
+            self.copies: list[tuple[Path, str]] = []
+
+        def copy_to_container(self, handle, local, remote) -> None:
+            self.copies.append((Path(local), str(remote)))
+
+    backend = FakeBackend()
+    prepare_goal_plus_container(
+        backend,
+        object(),
+        logging.getLogger(__name__),
+    )
+
+    assert (source.resolve(), "/opt/goal-plus") in backend.copies
 
 
 def test_codex_goal_plus_enables_only_project_goal_plus_hooks(tmp_path) -> None:

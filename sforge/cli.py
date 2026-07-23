@@ -30,6 +30,7 @@ import docker
 
 from sforge.harness.config import SForgeConfig, create_backend_from_config, load_config
 from sforge.harness.constants import DEFAULT_EVAL_INTERVAL
+from sforge.harness.pass_at_n import aggregate_replicas, replica_run_id
 from sforge.harness.docker_build import (
     build_all_images,
     build_work_image,
@@ -241,6 +242,10 @@ def _run_single_task(
     run_id: str,
     verbose: bool = False,
     shutdown_event: threading.Event | None = None,
+    group_run_id: str | None = None,
+    replica: int = 1,
+    replica_count: int = 1,
+    judge_concurrency: int | None = None,
 ) -> dict | None:
     """Run agent on one task. Returns a summary dict."""
     run_log_dir = config.log_dir / "runs" / run_id / task_spec.task_id
@@ -270,6 +275,8 @@ def _run_single_task(
     print(f"Running agent '{agent.name}' on task: {task_spec.task_id}")
     print(f"  Work image:  {task_spec.work_image_key}")
     print(f"  Run ID:      {run_id}")
+    if replica_count > 1:
+        print(f"  Replica:     {replica}/{replica_count} (group {group_run_id})")
     print(f"  Timeout:     {effective_timeout}s")
     if args.model or config.agent_model or agent.default_model:
         print(f"  Model:       {args.model or config.agent_model or agent.default_model}")
@@ -296,6 +303,8 @@ def _run_single_task(
     if config.judge_mem_limit:
         print(f"  Judge mem:   {config.judge_mem_limit}")
     print(f"  Judge URL:   {args.judge_url}")
+    if judge_concurrency is not None:
+        print(f"  Judge concurrency: {judge_concurrency} (group-wide)")
     print(f"  Log dir:     {run_log_dir}")
     print(f"  Agent log:   {run_log_dir / 'run_agent.log'}")
     print(f"  Agent output: {run_log_dir / 'agent_output.txt'}")
@@ -319,6 +328,8 @@ def _run_single_task(
         shutdown_event=shutdown_event,
         max_submissions=getattr(args, "max_submissions", None),
         submission_cooldown=getattr(args, "submission_cooldown", None),
+        judge_group_id=group_run_id,
+        judge_concurrency=judge_concurrency,
     )
 
     print(f"\nAgent completed in {result.runtime_seconds:.1f}s")
@@ -342,6 +353,12 @@ def _run_single_task(
         "model": args.model or config.agent_model or agent.default_model,
         **result.to_dict(),
     }
+    if replica_count > 1:
+        combined.update({
+            "group_run_id": group_run_id,
+            "replica": replica,
+            "replica_count": replica_count,
+        })
     (run_log_dir / "final_result.json").write_text(
         json.dumps(combined, indent=2, ensure_ascii=False)
     )
@@ -539,8 +556,21 @@ def cmd_run(args):
     backend = create_backend_from_config(base_config)
 
     run_id = args.run_id or uuid.uuid4().hex[:12]
+    replicas = args.replicas
+    if replicas < 1:
+        print("Error: --replicas must be positive")
+        sys.exit(1)
+    if args.replica_concurrency is not None and args.replica_concurrency < 1:
+        print("Error: --replica-concurrency must be positive")
+        sys.exit(1)
+    if args.judge_concurrency is not None and args.judge_concurrency < 1:
+        print("Error: --judge-concurrency must be positive")
+        sys.exit(1)
+
     multi = len(task_specs) > 1
-    verbose = not args.silent and not multi
+    replicated = replicas > 1
+    parallel = len(task_specs) * replicas > 1
+    verbose = not args.silent and not parallel
 
     # --- Resolve per-task overrides upfront and persist configs ---
     run_root = base_config.log_dir / "runs" / run_id
@@ -571,22 +601,59 @@ def cmd_run(args):
         "run_id": run_id,
         "experiment": args.experiment or None,
         "stagger": args.stagger or (experiment.stagger if experiment else None),
+        "replicas": replicas,
+        "replica_concurrency": args.replica_concurrency,
+        "judge_concurrency": args.judge_concurrency,
+        "success_threshold": args.success_threshold,
         "tasks": unified_tasks,
     }
     (run_root / "run_config.json").write_text(json.dumps(unified, indent=2, ensure_ascii=False))
+
+    invocations: list[
+        tuple[TaskSpec, SForgeConfig, argparse.Namespace, str, int]
+    ] = []
+    for ts, task_config, task_args in task_runs:
+        for replica in range(1, replicas + 1):
+            trial_run_id = replica_run_id(run_id, replica, replicas)
+            invocations.append((ts, task_config, task_args, trial_run_id, replica))
+            if replicated:
+                trial_config = {
+                    **_effective_config_dict(ts, task_args, task_config),
+                    "group_run_id": run_id,
+                    "replica": replica,
+                    "replica_count": replicas,
+                    "judge_concurrency": args.judge_concurrency,
+                    "success_threshold": args.success_threshold,
+                }
+                trial_log_dir = (
+                    base_config.log_dir / "runs" / trial_run_id / ts.task_id
+                )
+                trial_log_dir.mkdir(parents=True, exist_ok=True)
+                (trial_log_dir / "run_config.json").write_text(
+                    json.dumps(trial_config, indent=2, ensure_ascii=False)
+                )
 
     # Resolve stagger: CLI flag wins over experiment YAML
     stagger = args.stagger
     if stagger is None and experiment and experiment.stagger:
         stagger = experiment.stagger
 
-    if multi:
-        print(f"Multi-task run (verbose output disabled, check log files for details)")
+    stagger_delay = stagger / len(invocations) if stagger and len(invocations) > 1 else 0
+
+    if parallel:
+        label = "Replica" if replicated and not multi else "Parallel"
+        print(f"{label} run (verbose output disabled, check log files for details)")
         print(f"  Run ID:  {run_id}")
         if experiment:
             print(f"  Experiment: {args.experiment}")
-        n = len(task_runs)
-        stagger_delay = stagger / n if stagger and n > 1 else 0
+        if replicated:
+            print(f"  Replicas: {replicas} per task")
+            print(
+                f"  Work concurrency: "
+                f"{args.replica_concurrency or len(invocations)}"
+            )
+            judge_label = args.judge_concurrency or "unlimited"
+            print(f"  Judge concurrency: {judge_label}")
         if stagger:
             print(f"  Tasks:   {', '.join(t.task_id for t in task_specs)} (staggered over {stagger}s, {stagger_delay:.1f}s apart)")
         else:
@@ -603,39 +670,62 @@ def cmd_run(args):
 
     old_sigint = signal.signal(signal.SIGINT, _sigint_handler)
 
-    def _invoke(ts: TaskSpec, task_config: SForgeConfig, task_args):
+    def _invoke(
+        ts: TaskSpec,
+        task_config: SForgeConfig,
+        task_args,
+        trial_run_id: str,
+        replica: int,
+    ):
         try:
-            return ts, _run_single_task(
-                ts, task_args, task_config, backend, run_id,
+            return ts, replica, trial_run_id, _run_single_task(
+                ts, task_args, task_config, backend, trial_run_id,
                 verbose=verbose, shutdown_event=shutdown_event,
+                group_run_id=run_id if replicated or args.judge_concurrency else None,
+                replica=replica,
+                replica_count=replicas,
+                judge_concurrency=args.judge_concurrency,
             ), None
         except SystemExit:
             raise
         except Exception as e:
-            return ts, None, e
+            return ts, replica, trial_run_id, None, e
 
     summaries: list[dict] = []
 
     try:
-        if multi:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=len(task_runs)) as ex:
+        if parallel:
+            worker_concurrency = args.replica_concurrency or len(invocations)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=worker_concurrency) as ex:
                 futures = []
-                for i, (ts, tc, ta) in enumerate(task_runs):
+                for i, invocation in enumerate(invocations):
                     if i > 0 and stagger_delay > 0:
                         time.sleep(stagger_delay)
                         if shutdown_event.is_set():
                             break
-                    futures.append(ex.submit(_invoke, ts, tc, ta))
+                    futures.append(ex.submit(_invoke, *invocation))
                 for fut in concurrent.futures.as_completed(futures):
-                    ts, summary, err = fut.result()
+                    ts, replica, trial_run_id, summary, err = fut.result()
                     if err is not None:
-                        print(f"\n[{ts.task_id}] FAILED: {err}", file=sys.stderr)
-                        summaries.append({"task": ts.task_id, "error": str(err)})
+                        print(
+                            f"\n[{ts.task_id} replica {replica}] FAILED: {err}",
+                            file=sys.stderr,
+                        )
+                        summaries.append({
+                            "task": ts.task_id,
+                            "run_id": trial_run_id,
+                            "group_run_id": run_id,
+                            "replica": replica,
+                            "replica_count": replicas,
+                            "error": str(err),
+                        })
                     elif summary is not None:
                         summaries.append(summary)
         else:
-            ts, tc, ta = task_runs[0]
-            _, summary, err = _invoke(ts, tc, ta)
+            ts, tc, ta, trial_run_id, replica = invocations[0]
+            _, _, _, summary, err = _invoke(
+                ts, tc, ta, trial_run_id, replica
+            )
             if err is not None:
                 raise err
             if summary is not None:
@@ -648,7 +738,42 @@ def cmd_run(args):
     finally:
         signal.signal(signal.SIGINT, old_sigint)
 
-    if multi:
+    if replicated:
+        aggregates = []
+        for ts in task_specs:
+            task_trials = [s for s in summaries if s.get("task") == ts.task_id]
+            aggregates.append(
+                aggregate_replicas(
+                    ts.task_id,
+                    task_trials,
+                    score_direction=ts.judge.score_direction,
+                    success_threshold=args.success_threshold,
+                )
+            )
+        group_summary = {
+            "run_id": run_id,
+            "replicas": replicas,
+            "replica_concurrency": args.replica_concurrency or len(invocations),
+            "judge_concurrency": args.judge_concurrency,
+            "tasks": aggregates,
+        }
+        summary_path = run_root / "pass_at_n.json"
+        summary_path.write_text(
+            json.dumps(group_summary, indent=2, ensure_ascii=False)
+        )
+
+        print(f"\n=== pass@N summary ({replicas} replicas per task) ===")
+        for aggregate in aggregates:
+            pass_at_n = aggregate["pass_at_k"].get(str(replicas), 0.0)
+            scores = ", ".join(f"{score:g}" for score in aggregate["scores"])
+            print(
+                f"  {aggregate['task']:<30} "
+                f"success={aggregate['successes']}/{replicas} "
+                f"pass@{replicas}={pass_at_n:.2%} "
+                f"scores=[{scores}]"
+            )
+        print(f"\npass@N summary saved: {summary_path}")
+    elif multi:
         run_root = base_config.log_dir / "runs" / run_id
         summary_path = run_root / "summary.json"
         summary_path.write_text(json.dumps({
@@ -959,6 +1084,25 @@ def main():
                        help="Spread task launches evenly over N seconds (e.g. --stagger 300)")
     p_run.add_argument("--judge-url", default="http://host.docker.internal:8080", help="Judge server URL")
     p_run.add_argument("--run-id", default=None, help="Run ID for tracking")
+    p_run.add_argument(
+        "--replicas", type=int, default=1,
+        help="Independent agent trajectories per task for pass@N (default: 1)",
+    )
+    p_run.add_argument(
+        "--replica-concurrency", type=int, default=None,
+        help="Maximum concurrent work containers (default: all replicas/tasks)",
+    )
+    p_run.add_argument(
+        "--judge-concurrency", type=int, default=None,
+        help="Maximum concurrent ephemeral Judge containers for this run group",
+    )
+    p_run.add_argument(
+        "--success-threshold", type=float, default=None,
+        help=(
+            "Optional score threshold for pass@N success; direction comes from "
+            "the task's minimize/maximize setting"
+        ),
+    )
     net_group = p_run.add_mutually_exclusive_group()
     net_group.add_argument(
         "--disable-internet", action="store_true", default=False,

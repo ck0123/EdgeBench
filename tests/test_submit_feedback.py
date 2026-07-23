@@ -4,6 +4,7 @@ import logging
 import json
 import subprocess
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -11,8 +12,10 @@ import pytest
 from sforge.harness.backend.base import ExecResult
 from sforge.harness.agent.codex import CodexAgent
 from sforge.harness.evolve_scripts import generate_submit_script
-from sforge.harness.judge_server import JudgeState
-from sforge.harness.run_agent import _install_tools
+from sforge.harness.config import SForgeConfig
+from sforge.harness import judge_server
+from sforge.harness.judge_server import JudgeState, SubmissionStatus
+from sforge.harness.run_agent import _install_tools, _validate_judge_registration
 
 
 def test_generated_submit_script_has_valid_shell_syntax(tmp_path) -> None:
@@ -65,6 +68,117 @@ def test_history_keeps_official_normalized_score() -> None:
     assert entry["score"] == 123.0
     assert entry["score_0_100"] == 67.25
     assert entry["score_0_100_extended"] == 67.25
+
+
+def test_judge_group_registration_shares_one_concurrency_limiter() -> None:
+    state = object.__new__(JudgeState)
+    state.tasks = {"task": object()}
+    state.tokens = {}
+    state.run_resource_limits = {}
+    state.run_backends = {}
+    state.run_judge_groups = {}
+    state.judge_group_limits = {}
+    state.judge_group_semaphores = {}
+    state._tokens_lock = threading.Lock()
+
+    token_1 = state.register_session(
+        "task", "group-r01", judge_group_id="group", judge_concurrency=1
+    )
+    token_2 = state.register_session(
+        "task", "group-r02", judge_group_id="group", judge_concurrency=1
+    )
+
+    assert token_1 != token_2
+    assert state.run_judge_groups == {
+        "group-r01": "group",
+        "group-r02": "group",
+    }
+    assert len(state.judge_group_semaphores) == 1
+    with pytest.raises(ValueError, match="already registered"):
+        state.register_session(
+            "task", "group-r03", judge_group_id="group", judge_concurrency=2
+        )
+
+
+def test_judge_group_limiter_serializes_ephemeral_evaluations(
+    tmp_path, monkeypatch
+) -> None:
+    state = object.__new__(JudgeState)
+    state.config = SForgeConfig(log_dir=tmp_path)
+    state.tasks = {"task": object()}
+    state.backend = object()
+    state.run_backends = {}
+    state.run_history = {}
+    state._history_lock = threading.Lock()
+    state._tokens_lock = threading.Lock()
+    state.run_judge_groups = {"group-r01": "group", "group-r02": "group"}
+    state.judge_group_semaphores = {
+        "group": threading.BoundedSemaphore(1),
+    }
+    state.submissions = {
+        "sub-1": {"status": SubmissionStatus.QUEUED, "error": None},
+        "sub-2": {"status": SubmissionStatus.QUEUED, "error": None},
+    }
+
+    active = 0
+    maximum_active = 0
+    active_lock = threading.Lock()
+
+    class FakeReport:
+        def to_dict(self):
+            return {"pass_rate": 1.0, "score": 1.0, "valid": True}
+
+    def fake_judge_submission(**kwargs):
+        nonlocal active, maximum_active
+        with active_lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+        time.sleep(0.05)
+        with active_lock:
+            active -= 1
+        return FakeReport()
+
+    monkeypatch.setattr(judge_server, "judge_submission", fake_judge_submission)
+
+    threads = [
+        threading.Thread(
+            target=state._grade_worker,
+            args=("sub-1", "task", b"", "group-r01", "agent-1"),
+        ),
+        threading.Thread(
+            target=state._grade_worker,
+            args=("sub-2", "task", b"", "group-r02", "agent-1"),
+        ),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert maximum_active == 1
+    assert state.submissions["sub-1"]["status"] == SubmissionStatus.COMPLETED
+    assert state.submissions["sub-2"]["status"] == SubmissionStatus.COMPLETED
+
+
+def test_judge_registration_must_confirm_group_concurrency() -> None:
+    assert _validate_judge_registration(
+        {
+            "token": "token-1",
+            "judge_group_id": "group",
+            "judge_concurrency": 1,
+        },
+        run_id="group-r01",
+        judge_group_id="group",
+        judge_concurrency=1,
+    ) == "token-1"
+
+    with pytest.raises(RuntimeError, match="Restart `sforge serve`"):
+        _validate_judge_registration(
+            {"token": "old-server-token"},
+            run_id="group-r01",
+            judge_group_id="group",
+            judge_concurrency=1,
+        )
 
 
 def test_codex_prepare_container_copies_host_auth(tmp_path, monkeypatch) -> None:

@@ -79,6 +79,22 @@ variables. The launcher derives `DOCKER_HOST` from the active Docker context,
 rewrites host loopback proxies for the Work container, verifies auth, Docker,
 SForge, and the Judge API before starting, and generates a unique run ID.
 
+For independent pass@N trajectories, use the same launcher with explicit
+replica and Judge concurrency. This starts three isolated Work containers while
+allowing at most one ephemeral Judge container at a time:
+
+```bash
+REPLICAS=3 \
+REPLICA_CONCURRENCY=3 \
+JUDGE_CONCURRENCY=1 \
+./scripts/run_codex_only.sh
+```
+
+Each trial receives a sibling Run ID ending in `-r01`, `-r02`, and so on. The
+group result is written to `logs/runs/<group-run-id>/pass_at_n.json`. Restart a
+Judge server that was already running before the pass@N framework code was
+installed so its `/register` endpoint accepts the group concurrency fields.
+
 The launcher was verified end to end on 2026-07-22 with run ID
 `codex-only-launcher-smoke-20260722-155300`, `MODEL=gpt-5.5`,
 `SFORGE_CODEX_REASONING_EFFORT=medium`, `TIMEOUT_SECONDS=180`, and

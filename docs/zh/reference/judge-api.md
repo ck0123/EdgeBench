@@ -48,7 +48,9 @@ Content-Type: application/json
 
 {
   "task_id": "ad_placement_optimization",
-  "run_id": "run-001"
+  "run_id": "run-001-r01",
+  "judge_group_id": "run-001",
+  "judge_concurrency": 1
 }
 ```
 
@@ -56,11 +58,17 @@ Content-Type: application/json
 
 ```json
 {
-  "token": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+  "token": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+  "judge_group_id": "run-001",
+  "judge_concurrency": 1
 }
 ```
 
 Token 是一个 32 字符的十六进制字符串，内部维护任务 ID、运行 ID 以及两个独立的计数器：Agent 提交（`agent-1`、`agent-2`、...）和自动评测提交（`auto-1`、`auto-2`、...）。
+
+`judge_group_id` 和 `judge_concurrency` 是可选字段。使用同一 group ID 注册的
+多个 replica 会共享组级并发限制；等待中的提交保持 queued，每个获准执行的
+提交仍会在独立的临时 Judge 容器中运行。
 
 ### 提交归档
 

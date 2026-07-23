@@ -130,6 +130,10 @@ sforge run --task ad_placement_optimization gitlet rookiedb --agent claude-code
 
 # 实验配置模式
 sforge run --experiment experiment.yaml
+
+# 三条独立轨迹、三个 Work 容器，Judge 容器最多同时一个
+sforge run --task vliw_kernel_optimization --agent codex \
+  --replicas 3 --replica-concurrency 3 --judge-concurrency 1
 ```
 
 ### 完整选项
@@ -143,6 +147,10 @@ sforge run --experiment experiment.yaml
 | `--timeout` | `3600` | Agent 超时时间（秒） |
 | `--eval-interval` | `300` | 自动评测守护进程的间隔时间（秒） |
 | `--run-id` | 随机生成 | 运行标识符，用于跟踪和日志组织 |
+| `--replicas` | `1` | 每个任务的独立 Agent 轨迹数；大于 1 时启用 pass@N 汇总。 |
+| `--replica-concurrency` | 全部 | 跨任务和 replica 同时运行的 Work 容器上限。 |
+| `--judge-concurrency` | 不限制 | 当前运行组同时存在的临时 Judge 容器上限；设为 `1` 会串行评测全部 replica。 |
+| `--success-threshold` | --- | replica 成功所需的可选分数门槛；比较方向使用任务的 `score_direction`，并始终要求测试全部通过。 |
 | `--judge-url` | `http://host.docker.internal:8080` | 容器内部看到的 Judge 服务器 URL |
 | `--backend` | `docker` | 容器后端（`docker` 或 `k8s`） |
 | `--stagger` | --- | 将任务启动均匀分散在 N 秒内（如 `--stagger 300`） |
@@ -177,6 +185,14 @@ logs/runs/<run_id>/<task_id>/
 ├── final_result.json    # 最优分、总轮次等汇总
 └── submissions/         # 每轮评测详情
 ```
+
+使用 `--replicas N` 时，每条物理轨迹使用独立的同级 Run ID，例如
+`<run_id>-r01`；运行组汇总写入 `logs/runs/<run_id>/pass_at_n.json`。该文件
+保留每条 trial、成功数量、`k=1..N` 的 pass@k 估计，以及最好/中位/最差分数。
+
+Judge 并发限制控制的是临时评测容器数量，而不是 Judge HTTP 服务数量。设为
+`1` 时仍保持每次提交使用全新容器的隔离性，但任何时刻最多只运行一个 Judge
+容器。
 
 ## sforge eval
 

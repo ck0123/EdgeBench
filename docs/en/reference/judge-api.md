@@ -48,7 +48,9 @@ Content-Type: application/json
 
 {
   "task_id": "ad_placement_optimization",
-  "run_id": "run-001"
+  "run_id": "run-001-r01",
+  "judge_group_id": "run-001",
+  "judge_concurrency": 1
 }
 ```
 
@@ -56,11 +58,17 @@ Content-Type: application/json
 
 ```json
 {
-  "token": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
+  "token": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4",
+  "judge_group_id": "run-001",
+  "judge_concurrency": 1
 }
 ```
 
 The token is a 32-character hex string. It tracks the task, run, and separate counters for agent submissions (`agent-1`, `agent-2`, ...) and auto-eval submissions (`auto-1`, `auto-2`, ...).
+
+`judge_group_id` and `judge_concurrency` are optional. Replicas that register
+the same group ID share a group-wide limiter. Waiting submissions remain queued,
+and each admitted submission still runs in its own ephemeral Judge container.
 
 ### Submit Archive
 

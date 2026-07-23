@@ -128,10 +128,14 @@ class RegisterRequest(BaseModel):
     k8s_kubeconfig: str | None = None
     max_agent_submissions: int | None = None
     submission_cooldown: int | None = None
+    judge_group_id: str | None = None
+    judge_concurrency: int | None = None
 
 
 class RegisterResponse(BaseModel):
     token: str
+    judge_group_id: str | None = None
+    judge_concurrency: int | None = None
 
 
 class SubmitResponse(BaseModel):
@@ -183,6 +187,9 @@ class JudgeState:
         self.tokens: dict[str, dict] = {}  # token -> {task_id, run_id, next_agent, next_auto, judge_cpu_limit, judge_mem_limit}
         self.run_resource_limits: dict[str, dict] = {}  # run_id -> {judge_cpu_limit, judge_mem_limit}
         self.run_backends: dict[str, ContainerBackend] = {}  # run_id -> backend
+        self.run_judge_groups: dict[str, str] = {}  # run_id -> replica group ID
+        self.judge_group_limits: dict[str, int] = {}
+        self.judge_group_semaphores: dict[str, threading.BoundedSemaphore] = {}
         self._game_lock = threading.Lock()
         self._history_lock = threading.Lock()
         self._tokens_lock = threading.Lock()
@@ -270,11 +277,29 @@ class JudgeState:
                          k8s_node_selector: dict[str, str] | None = None,
                          k8s_kubeconfig: str | None = None,
                          max_agent_submissions: int | None = None,
-                         submission_cooldown: int | None = None) -> str:
+                         submission_cooldown: int | None = None,
+                         judge_group_id: str | None = None,
+                         judge_concurrency: int | None = None) -> str:
         if task_id not in self.tasks:
             raise ValueError(f"Unknown task: {task_id}")
+        if judge_concurrency is not None and judge_concurrency < 1:
+            raise ValueError("judge_concurrency must be positive")
         token = secrets.token_hex(16)
         with self._tokens_lock:
+            resolved_group_id = judge_group_id or run_id
+            if judge_concurrency is not None:
+                existing_limit = self.judge_group_limits.get(resolved_group_id)
+                if existing_limit is not None and existing_limit != judge_concurrency:
+                    raise ValueError(
+                        f"Judge group {resolved_group_id!r} is already registered "
+                        f"with concurrency {existing_limit}, not {judge_concurrency}"
+                    )
+                if existing_limit is None:
+                    self.judge_group_limits[resolved_group_id] = judge_concurrency
+                    self.judge_group_semaphores[resolved_group_id] = (
+                        threading.BoundedSemaphore(judge_concurrency)
+                    )
+                self.run_judge_groups[run_id] = resolved_group_id
             self.tokens[token] = {
                 "task_id": task_id,
                 "run_id": run_id,
@@ -285,6 +310,8 @@ class JudgeState:
                 "max_agent_submissions": max_agent_submissions,
                 "submission_cooldown": submission_cooldown,
                 "last_agent_submit_at": 0.0,
+                "judge_group_id": resolved_group_id,
+                "judge_concurrency": judge_concurrency,
             }
             self.run_resource_limits[run_id] = {
                 "judge_cpu_limit": judge_cpu_limit,
@@ -300,6 +327,17 @@ class JudgeState:
                     k8s_kubeconfig=k8s_kubeconfig or self.config.k8s_kubeconfig,
                 )
         return token
+
+    def _get_judge_limiter(
+        self, run_id: str | None
+    ) -> threading.BoundedSemaphore | None:
+        if not run_id:
+            return None
+        with self._tokens_lock:
+            group_id = self.run_judge_groups.get(run_id)
+            if group_id is None:
+                return None
+            return self.judge_group_semaphores.get(group_id)
 
     def _get_backend(self, run_id: str | None = None) -> ContainerBackend:
         if run_id and run_id in self.run_backends:
@@ -438,7 +476,10 @@ class JudgeState:
             "report": None,
             "error": None,
         }
-        self._record_submission(log_run_id, submission_id, task_id, round, None, None, status="running")
+        self._record_submission(
+            log_run_id, submission_id, task_id, round, None, None,
+            status="queued",
+        )
 
         thread = threading.Thread(
             target=self._grade_worker,
@@ -452,10 +493,17 @@ class JudgeState:
     def _grade_worker(self, submission_id: str, task_id: str, archive: bytes,
                       run_id: str | None = None, round: int | None = None,
                       judge_cpu_limit: int | None = None, judge_mem_limit: str | None = None) -> None:
-        self.submissions[submission_id]["status"] = SubmissionStatus.RUNNING
+        log_run_id = run_id or submission_id
+        limiter = self._get_judge_limiter(run_id)
+        if limiter is not None:
+            limiter.acquire()
         try:
+            self.submissions[submission_id]["status"] = SubmissionStatus.RUNNING
+            self._record_submission(
+                log_run_id, submission_id, task_id, round, None, None,
+                status="running",
+            )
             task_spec = self.tasks[task_id]
-            log_run_id = run_id or submission_id
             sub_num = str(round) if round is not None else "1"
             sub_log_dir = (
                 self.config.log_dir / "runs" / log_run_id
@@ -483,6 +531,9 @@ class JudgeState:
             self.submissions[submission_id]["status"] = SubmissionStatus.ERROR
             self.submissions[submission_id]["error"] = str(e)
             self._record_submission(log_run_id, submission_id, task_id, round, None, str(e))
+        finally:
+            if limiter is not None:
+                limiter.release()
 
     def get_result(self, submission_id: str) -> dict | None:
         return self.submissions.get(submission_id)
@@ -778,8 +829,15 @@ def create_app(config: SForgeConfig | None = None) -> FastAPI:
                 k8s_kubeconfig=req.k8s_kubeconfig,
                 max_agent_submissions=req.max_agent_submissions,
                 submission_cooldown=req.submission_cooldown,
+                judge_group_id=req.judge_group_id,
+                judge_concurrency=req.judge_concurrency,
             )
-            return RegisterResponse(token=token)
+            return RegisterResponse(
+                token=token,
+                judge_group_id=(req.judge_group_id or req.run_id)
+                if req.judge_concurrency is not None else None,
+                judge_concurrency=req.judge_concurrency,
+            )
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e))
 

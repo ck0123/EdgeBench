@@ -135,6 +135,30 @@ def _build_agent_env(
 
     return env
 
+
+def _validate_judge_registration(
+    registration: dict,
+    *,
+    run_id: str,
+    judge_group_id: str | None,
+    judge_concurrency: int | None,
+) -> str:
+    """Validate Judge feature negotiation and return the session token."""
+    if judge_concurrency is not None:
+        expected_group_id = judge_group_id or run_id
+        if (
+            registration.get("judge_group_id") != expected_group_id
+            or registration.get("judge_concurrency") != judge_concurrency
+        ):
+            raise RuntimeError(
+                "Judge server did not confirm the requested group concurrency. "
+                "Restart `sforge serve` with the upgraded EdgeBench code."
+            )
+    token = registration.get("token")
+    if not token:
+        raise RuntimeError("Judge server registration response did not include a token")
+    return str(token)
+
 # ---------------------------------------------------------------------------
 # Container setup helpers
 # ---------------------------------------------------------------------------
@@ -290,6 +314,8 @@ def run_agent(
     shutdown_event: threading.Event | None = None,
     max_submissions: int | None = None,
     submission_cooldown: int | None = None,
+    judge_group_id: str | None = None,
+    judge_concurrency: int | None = None,
 ) -> RunResult:
     """Run an agent on a task with iterative evaluation.
 
@@ -350,6 +376,10 @@ def run_agent(
             reg_body["max_agent_submissions"] = max_submissions
         if submission_cooldown is not None:
             reg_body["submission_cooldown"] = submission_cooldown
+        if judge_group_id is not None:
+            reg_body["judge_group_id"] = judge_group_id
+        if judge_concurrency is not None:
+            reg_body["judge_concurrency"] = judge_concurrency
         if backend.backend_name != "docker":
             reg_body["backend"] = backend.backend_name
             reg_body["k8s_image_registry"] = config.k8s_image_registry
@@ -373,7 +403,12 @@ def run_agent(
                 wait = 2 * _reg_attempt
                 logger.warning("Register attempt %d/5 failed (%s), retrying in %ds...", _reg_attempt, exc, wait)
                 time.sleep(wait)
-        session_token = reg_resp.json()["token"]
+        session_token = _validate_judge_registration(
+            reg_resp.json(),
+            run_id=run_id,
+            judge_group_id=judge_group_id,
+            judge_concurrency=judge_concurrency,
+        )
         logger.info("Registered session with judge server")
 
         # 2. Create container

@@ -22,6 +22,10 @@ Common environment variables:
                                   (default: http://host.docker.internal:8080)
   WORK_CPU_LIMIT                  Work CPU limit (default: 4)
   JUDGE_CPU_LIMIT                 Judge CPU limit (default: 3)
+  REPLICAS                        Independent trajectories for pass@N (default: 1)
+  REPLICA_CONCURRENCY             Concurrent work containers (default: REPLICAS)
+  JUDGE_CONCURRENCY               Concurrent ephemeral Judge containers
+  SUCCESS_THRESHOLD               Optional score threshold for a successful trial
   SFORGE_CODEX_REASONING_EFFORT   Codex reasoning effort (default: medium)
   SFORGE_CODEX_AUTH_FILE          Host auth.json (default: ~/.codex/auth.json)
   SFORGE_CODEX_RUNTIME_ARCHIVE    Optional Linux x64 Codex runtime archive
@@ -31,6 +35,12 @@ Example: six-hour Terra VLIW run
   MODEL=gpt-5.6-terra \
   TIMEOUT_SECONDS=21600 \
   SFORGE_CODEX_REASONING_EFFORT=medium \
+  ./scripts/run_codex_only.sh
+
+Example: pass@3 with three workers and one Judge container at a time
+  REPLICAS=3 \
+  REPLICA_CONCURRENCY=3 \
+  JUDGE_CONCURRENCY=1 \
   ./scripts/run_codex_only.sh
 
 This launcher always selects --agent codex and --enable-internet. It does not
@@ -93,6 +103,10 @@ eval_interval="${EVAL_INTERVAL:-300}"
 judge_url="${JUDGE_URL:-http://host.docker.internal:8080}"
 work_cpu_limit="${WORK_CPU_LIMIT:-4}"
 judge_cpu_limit="${JUDGE_CPU_LIMIT:-3}"
+replicas="${REPLICAS:-1}"
+replica_concurrency="${REPLICA_CONCURRENCY:-$replicas}"
+judge_concurrency="${JUDGE_CONCURRENCY:-}"
+success_threshold="${SUCCESS_THRESHOLD:-}"
 
 if [[ -z "$task" || -z "$model" ]]; then
     printf 'TASK and MODEL must both be non-empty\n' >&2
@@ -103,6 +117,15 @@ require_positive_integer TIMEOUT_SECONDS "$timeout_seconds"
 require_positive_integer EVAL_INTERVAL "$eval_interval"
 require_positive_integer WORK_CPU_LIMIT "$work_cpu_limit"
 require_positive_integer JUDGE_CPU_LIMIT "$judge_cpu_limit"
+require_positive_integer REPLICAS "$replicas"
+require_positive_integer REPLICA_CONCURRENCY "$replica_concurrency"
+if [[ -n "$judge_concurrency" ]]; then
+    require_positive_integer JUDGE_CONCURRENCY "$judge_concurrency"
+fi
+if [[ -n "$success_threshold" && ! "$success_threshold" =~ ^-?[0-9]+([.][0-9]+)?$ ]]; then
+    printf 'SUCCESS_THRESHOLD must be numeric, got: %s\n' "$success_threshold" >&2
+    exit 2
+fi
 
 model_slug="$(printf '%s' "$model" | tr -cs '[:alnum:]' '-')"
 task_slug="$(printf '%s' "$task" | tr -cs '[:alnum:]' '-')"
@@ -149,16 +172,33 @@ printf 'Model: %s; reasoning effort: %s\n' "$model" "$SFORGE_CODEX_REASONING_EFF
 printf 'Budget: %ss; auto-eval: %ss; CPU work/judge: %s/%s\n' \
     "$timeout_seconds" "$eval_interval" "$work_cpu_limit" "$judge_cpu_limit"
 printf 'Judge: %s\n' "$judge_url"
+printf 'Replicas: %s; work concurrency: %s; Judge concurrency: %s\n' \
+    "$replicas" "$replica_concurrency" "${judge_concurrency:-unlimited}"
+if [[ -n "$success_threshold" ]]; then
+    printf 'Success score threshold: %s\n' "$success_threshold"
+fi
 printf 'Codex Linux runtime: %s\n' "$runtime_note"
 
-exec "$python_bin" -m sforge run \
-    --task "$task" \
-    --agent codex \
-    --model "$model" \
-    --timeout "$timeout_seconds" \
-    --eval-interval "$eval_interval" \
-    --judge-url "$judge_url" \
-    --run-id "$run_id" \
-    --enable-internet \
-    --work-cpu-limit "$work_cpu_limit" \
+run_args=(
+    -m sforge run
+    --task "$task"
+    --agent codex
+    --model "$model"
+    --timeout "$timeout_seconds"
+    --eval-interval "$eval_interval"
+    --judge-url "$judge_url"
+    --run-id "$run_id"
+    --replicas "$replicas"
+    --replica-concurrency "$replica_concurrency"
+    --enable-internet
+    --work-cpu-limit "$work_cpu_limit"
     --judge-cpu-limit "$judge_cpu_limit"
+)
+if [[ -n "$judge_concurrency" ]]; then
+    run_args+=(--judge-concurrency "$judge_concurrency")
+fi
+if [[ -n "$success_threshold" ]]; then
+    run_args+=(--success-threshold "$success_threshold")
+fi
+
+exec "$python_bin" "${run_args[@]}"

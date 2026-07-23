@@ -127,6 +127,10 @@ sforge run --task ad_placement_optimization gitlet rookiedb --agent claude-code
 
 # Experiment config mode
 sforge run --experiment experiment.yaml
+
+# Three independent trajectories, three Work containers, at most one Judge
+sforge run --task vliw_kernel_optimization --agent codex \
+  --replicas 3 --replica-concurrency 3 --judge-concurrency 1
 ```
 
 ### Full options
@@ -140,6 +144,10 @@ sforge run --experiment experiment.yaml
 | `--timeout` | `3600` | Agent timeout in seconds |
 | `--eval-interval` | `300` | Auto-eval daemon interval in seconds |
 | `--run-id` | random | Run identifier for tracking and log organization |
+| `--replicas` | `1` | Independent agent trajectories per task. Values greater than one enable pass@N aggregation. |
+| `--replica-concurrency` | all | Maximum number of concurrent Work containers across tasks and replicas. |
+| `--judge-concurrency` | unlimited | Maximum concurrent ephemeral Judge containers for this run group. Use `1` to serialize evaluation from all replicas. |
+| `--success-threshold` | --- | Optional score threshold for a successful replica. The task's `score_direction` determines whether lower or higher is better. Full test pass is always required. |
 | `--judge-url` | `http://host.docker.internal:8080` | Judge server URL as seen from inside the container |
 | `--backend` | `docker` | Container backend (`docker` or `k8s`) |
 | `--stagger` | --- | Spread task launches evenly over N seconds (e.g., `--stagger 300`) |
@@ -174,6 +182,15 @@ logs/runs/<run_id>/<task_id>/
 ├── final_result.json    # Summary with best_pass_rate, total_rounds, etc.
 └── submissions/         # Per-round evaluation details
 ```
+
+With `--replicas N`, each physical trajectory uses a unique sibling run ID such
+as `<run_id>-r01`, while the group-level result is written to
+`logs/runs/<run_id>/pass_at_n.json`. The file records every trial, success
+count, pass@k estimates for `k=1..N`, and best/median/worst scores.
+
+Judge concurrency limits the number of ephemeral evaluation containers, not the
+Judge HTTP service. A limit of one preserves per-submission isolation while
+ensuring that only one Judge container runs at a time.
 
 ## sforge eval
 

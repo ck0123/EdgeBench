@@ -1012,8 +1012,8 @@ def main():
     )
 
     # Global flags
-    parser.add_argument("--log-dir", dest="log_dir", default=None)
-    parser.add_argument("--tasks-dir", dest="tasks_dir", default=None)
+    parser.add_argument("--log-dir", dest="log_dir", type=Path, default=None)
+    parser.add_argument("--tasks-dir", dest="tasks_dir", type=Path, default=None)
     parser.add_argument("--silent", action="store_true", default=False,
                         help="Suppress detailed log output (auto-enabled for multi-task runs)")
 
@@ -1161,7 +1161,7 @@ def main():
     # visualizer
     p_viz = subparsers.add_parser("visualizer", help="Start run-results visualizer web UI")
     p_viz.add_argument("--runs-dir", default="logs/runs", help="Directory of run folders")
-    p_viz.add_argument("--tasks-dir", dest="tasks_dir", default=None, help="Directory of task JSONs (for score_direction). Defaults to the harness tasks/ dir.")
+    p_viz.add_argument("--tasks-dir", dest="tasks_dir", type=Path, default=None, help="Directory of task JSONs (for score_direction). Defaults to the harness tasks/ dir.")
     p_viz.add_argument("--host", default="127.0.0.1")
     p_viz.add_argument("--port", type=int, default=8000)
     p_viz.set_defaults(func=cmd_visualizer)

@@ -69,6 +69,8 @@ def test_codex_goal_plus_run_and_resume_commands() -> None:
     assert run_cmd.startswith('export GOAL_PLUS_OUTER_DEADLINE_AT=')
     assert "model_reasoning_effort=\"medium\"" in run_cmd
     assert "--model gpt-5.5" in run_cmd
+    assert "codex exec -c" in run_cmd
+    assert "--json" in run_cmd
     assert "\\$goal-plus mode=autonomous" in run_cmd
     assert "strategy.worker_host to codex" in run_cmd
     assert "budget.max_parallel to 3" in run_cmd
@@ -77,7 +79,8 @@ def test_codex_goal_plus_run_and_resume_commands() -> None:
     assert '"max_turns"' not in run_cmd
     assert "sforge-goal-plus-submit --details" in run_cmd
     assert "sforge-goal-plus-submit --details --if-new" in resume_cmd
-    assert "--model gpt-5.5 resume --last" in resume_cmd
+    assert "--model gpt-5.5 --json resume --last" in resume_cmd
+    assert "--json" in resume_cmd
     assert "${SYNC_STATUS}" in resume_cmd
     assert "${{SYNC_STATUS}}" not in resume_cmd
 

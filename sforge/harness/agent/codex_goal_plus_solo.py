@@ -26,7 +26,7 @@ class CodexGoalPlusSoloAgent(CodexGoalPlusAgent):
     run_cmd = (
         'export GOAL_PLUS_OUTER_DEADLINE_AT="$SFORGE_AGENT_DEADLINE"; '
         'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
-        'exec codex exec --dangerously-bypass-approvals-and-sandbox '
+        'exec codex exec --json --dangerously-bypass-approvals-and-sandbox '
         '"\\$goal-plus mode=autonomous $(cat {prompt_file})\n\n'
         'Run this as a controlled single-worker AutoResearch experiment. Freeze '
         'exactly one SearchSpec with strategy.worker_host=codex, '
@@ -64,7 +64,7 @@ class CodexGoalPlusSoloAgent(CodexGoalPlusAgent):
         'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
         'SYNC_OUTPUT=$(sforge-goal-plus-submit --details --if-new 2>&1); '
         'SYNC_STATUS=$?; '
-        'exec codex exec resume --last --dangerously-bypass-approvals-and-sandbox '
+        'exec codex exec --json resume --last --dangerously-bypass-approvals-and-sandbox '
         '"Resume the controlled single-worker Goal Plus experiment. The promotion '
         'bridge preflight returned exit status ${SYNC_STATUS}:\n${SYNC_OUTPUT}\n\n'
         'Keep the frozen contract at worker_host=codex, max_parallel=1, '

@@ -274,8 +274,8 @@ def test_codex_run_and_resume_commands_pass_model_and_reasoning_explicitly(
     )
 
     expected = "codex exec -c 'model_reasoning_effort=\"medium\"' --model gpt-5.5"
-    assert run_cmd.startswith(f"{expected} ")
-    assert resume_cmd.startswith(f"{expected} resume ")
+    assert run_cmd.startswith(f"{expected} --json ")
+    assert resume_cmd.startswith(f"{expected} --json resume ")
 
 
 def test_codex_rejects_unknown_reasoning_effort(monkeypatch) -> None:

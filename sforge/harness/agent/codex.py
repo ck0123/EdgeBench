@@ -63,8 +63,8 @@ EOF
 fi''',
         "test -s ~/.codex/auth.json && codex login status >/dev/null",
     ]
-    run_cmd = 'codex exec --dangerously-bypass-approvals-and-sandbox "$(cat {prompt_file})"'
-    resume_cmd = 'codex exec resume --last --dangerously-bypass-approvals-and-sandbox "Continue working."'
+    run_cmd = 'codex exec --json --dangerously-bypass-approvals-and-sandbox "$(cat {prompt_file})"'
+    resume_cmd = 'codex exec --json resume --last --dangerously-bypass-approvals-and-sandbox "Continue working."'
     api_key_env = "OPENAI_API_KEY"
     api_base_env = "OPENAI_BASE_URL"
     default_api_base_url = "https://api.openai.com"
@@ -168,6 +168,25 @@ codex --version
         if not self._config.agent_api_base_url:
             if "OPENAI_API_KEY" in env and "CODEX_API_KEY" not in env:
                 env["CODEX_API_KEY"] = env["OPENAI_API_KEY"]
+
+    def collect_artifacts(
+        self,
+        backend: ContainerBackend,
+        handle: ContainerHandle,
+        log_dir: Path,
+        logger: logging.Logger,
+    ) -> None:
+        """Preserve Codex rollouts for usage accounting without copying auth."""
+
+        try:
+            archive = backend.copy_from_container(
+                handle, PurePosixPath("/home/agent/.codex/sessions")
+            )
+            if archive:
+                (log_dir / "codex-sessions.tar").write_bytes(archive)
+                logger.info("Collected Codex sessions: %d bytes", len(archive))
+        except Exception as exc:
+            logger.warning("Failed to collect Codex sessions: %s", exc)
 
     def format_run_cmd(
         self,

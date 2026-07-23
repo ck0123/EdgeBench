@@ -86,7 +86,7 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
     run_cmd = (
         'export GOAL_PLUS_OUTER_DEADLINE_AT="$SFORGE_AGENT_DEADLINE"; '
         'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
-        'exec codex exec --dangerously-bypass-approvals-and-sandbox '
+        'exec codex exec --json --dangerously-bypass-approvals-and-sandbox '
         '"\\$goal-plus mode=autonomous $(cat {prompt_file})\n\n'
         'Use the Goal Plus framework to perform deep search optimization for this task. '
         'For the initial frozen SearchSpec, set strategy.worker_host to codex and '
@@ -121,7 +121,7 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
         'SYNC_OUTPUT=$(sforge-goal-plus-submit --details --if-new 2>&1); '
         'SYNC_STATUS=$?; '
-        'exec codex exec resume --last --dangerously-bypass-approvals-and-sandbox '
+        'exec codex exec --json resume --last --dangerously-bypass-approvals-and-sandbox '
         '"Continue the active Goal Plus task. Before this resume, the EdgeBench '
         'Goal Plus promotion bridge returned exit status ${SYNC_STATUS}:\n'
         '${SYNC_OUTPUT}\n\nThe total exploration time budget is '
@@ -211,4 +211,5 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         log_dir: Path,
         logger: logging.Logger,
     ) -> None:
+        super().collect_artifacts(backend, handle, log_dir, logger)
         collect_goal_plus_artifacts(backend, handle, log_dir, logger)

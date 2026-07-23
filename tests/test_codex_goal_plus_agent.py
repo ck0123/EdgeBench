@@ -72,11 +72,49 @@ def test_codex_goal_plus_run_and_resume_commands() -> None:
     assert "\\$goal-plus mode=autonomous" in run_cmd
     assert "strategy.worker_host to codex" in run_cmd
     assert "budget.max_parallel to 3" in run_cmd
+    assert '"max_runtime_seconds": 1200' in run_cmd
+    assert "do not prescribe a turn limit" in run_cmd
+    assert '"max_turns"' not in run_cmd
     assert "sforge-goal-plus-submit --details" in run_cmd
     assert "sforge-goal-plus-submit --details --if-new" in resume_cmd
     assert "--model gpt-5.5 resume --last" in resume_cmd
     assert "${SYNC_STATUS}" in resume_cmd
     assert "${{SYNC_STATUS}}" not in resume_cmd
+
+
+def test_codex_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> None:
+    config = SForgeConfig(
+        agent_extra_env={
+            "SFORGE_GOAL_PLUS_MAX_PARALLEL": "5",
+            "SFORGE_GOAL_PLUS_WORKER_RUNTIME_SECONDS": "900",
+        }
+    )
+    agent = CodexGoalPlusAgent(config)
+
+    run_cmd = agent.format_run_cmd("/tmp/prompt.md", model="gpt-5.5")
+    resume_cmd = agent.format_run_cmd(
+        "/tmp/prompt.md", model="gpt-5.5", resume=True
+    )
+
+    assert "budget.max_parallel to 5" in run_cmd
+    assert '"max_runtime_seconds": 900' in run_cmd
+    assert "budget.max_parallel to 5" in resume_cmd
+    assert '"max_runtime_seconds": 900' in resume_cmd
+
+
+def test_codex_goal_plus_rejects_invalid_experiment_concurrency() -> None:
+    agent = CodexGoalPlusAgent(
+        SForgeConfig(
+            agent_extra_env={"SFORGE_GOAL_PLUS_MAX_PARALLEL": "0"}
+        )
+    )
+
+    try:
+        agent.format_run_cmd("/tmp/prompt.md", model="gpt-5.5")
+    except ValueError as exc:
+        assert "SFORGE_GOAL_PLUS_MAX_PARALLEL" in str(exc)
+    else:
+        raise AssertionError("expected invalid Goal Plus concurrency to fail")
 
 
 def test_codex_goal_plus_solo_enforces_one_long_lived_worker() -> None:

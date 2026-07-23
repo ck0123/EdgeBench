@@ -30,6 +30,29 @@ from sforge.harness.agent.goal_plus_runtime import (
 from sforge.harness.backend import ContainerBackend, ContainerHandle
 
 
+GOAL_PLUS_MAX_PARALLEL_ENV = "SFORGE_GOAL_PLUS_MAX_PARALLEL"
+GOAL_PLUS_WORKER_RUNTIME_ENV = "SFORGE_GOAL_PLUS_WORKER_RUNTIME_SECONDS"
+DEFAULT_GOAL_PLUS_MAX_PARALLEL = 3
+DEFAULT_GOAL_PLUS_WORKER_RUNTIME_SECONDS = 1200
+
+
+def _positive_int_extra_env(
+    values: dict[str, str],
+    name: str,
+    default: int,
+) -> int:
+    raw = values.get(name)
+    if raw is None:
+        return default
+    try:
+        parsed = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer, got {raw!r}") from exc
+    if parsed < 1:
+        raise ValueError(f"{name} must be a positive integer, got {raw!r}")
+    return parsed
+
+
 class CodexGoalPlusAgent(CodexAgent):
     """Run the normal EdgeBench prompt through Codex's Goal Plus skill."""
 
@@ -67,11 +90,13 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         '"\\$goal-plus mode=autonomous $(cat {prompt_file})\n\n'
         'Use the Goal Plus framework to perform deep search optimization for this task. '
         'For the initial frozen SearchSpec, set strategy.worker_host to codex and '
-        'budget.max_parallel to 3. Choose budget.max_candidates yourself from the '
+        'budget.max_parallel to __GOAL_PLUS_MAX_PARALLEL__. Choose '
+        'budget.max_candidates yourself from the '
         'remaining task time and the search plan. Prefer a small number of serious '
         'directions and deep reinvestment over shallow breadth. Set '
-        'strategy.worker_budget to {{\"max_runtime_seconds\": 1200, '
-        '\"max_turns\": 40, \"on_exceed\": \"interrupt\"}}; this is the '
+        'strategy.worker_budget to {{\"max_runtime_seconds\": '
+        '__GOAL_PLUS_WORKER_RUNTIME_SECONDS__, \"on_exceed\": \"interrupt\"}}; '
+        'do not prescribe a turn limit. This is the '
         'normal first-dispatch budget for each candidate worker, not a cap on '
         'justified reinvestment.\n'
         'The total exploration time budget for this task is '
@@ -104,14 +129,48 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         'timestamp ${SFORGE_AGENT_DEADLINE}, and ${REMAINING} seconds remain. '
         'Restore the durable Goal Plus and Search state, then continue the Codex '
         'rolling worker pool. If the initial SearchSpec has not been frozen yet, '
-        'set strategy.worker_host to codex, budget.max_parallel to 3, choose '
+        'set strategy.worker_host to codex, budget.max_parallel to '
+        '__GOAL_PLUS_MAX_PARALLEL__, choose '
         'budget.max_candidates from the remaining time, and set '
-        'strategy.worker_budget to {\"max_runtime_seconds\": 1200, '
-        '\"max_turns\": 40, \"on_exceed\": \"interrupt\"}. After every '
+        'strategy.worker_budget to {\"max_runtime_seconds\": '
+        '__GOAL_PLUS_WORKER_RUNTIME_SECONDS__, \"on_exceed\": \"interrupt\"} '
+        'without a turn limit. After every '
         'search_promote, run sforge-goal-plus-submit --details from the outer/main '
         'session and require a successful Judge result before recording or '
         'completing the search."'
     )
+
+    def format_run_cmd(
+        self,
+        prompt_path: str,
+        *,
+        model: str | None = None,
+        cwd: str = "",
+        internet: bool = True,
+        resume: bool = False,
+    ) -> str:
+        cmd = super().format_run_cmd(
+            prompt_path,
+            model=model,
+            cwd=cwd,
+            internet=internet,
+            resume=resume,
+        )
+        max_parallel = _positive_int_extra_env(
+            self._config.agent_extra_env,
+            GOAL_PLUS_MAX_PARALLEL_ENV,
+            DEFAULT_GOAL_PLUS_MAX_PARALLEL,
+        )
+        worker_runtime = _positive_int_extra_env(
+            self._config.agent_extra_env,
+            GOAL_PLUS_WORKER_RUNTIME_ENV,
+            DEFAULT_GOAL_PLUS_WORKER_RUNTIME_SECONDS,
+        )
+        return cmd.replace(
+            "__GOAL_PLUS_MAX_PARALLEL__", str(max_parallel)
+        ).replace(
+            "__GOAL_PLUS_WORKER_RUNTIME_SECONDS__", str(worker_runtime)
+        )
 
     def prepare_container(
         self,

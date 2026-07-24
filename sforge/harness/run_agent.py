@@ -45,6 +45,7 @@ import requests
 from sforge.harness.agent import Agent
 from sforge.harness.backend import ContainerBackend, ContainerHandle
 from sforge.harness.config import SForgeConfig
+from sforge.harness.container_runtime import ensure_task_runtime
 from sforge.harness.constants import ADMIN_SECRET
 from sforge.harness.docker_build import (
     close_logger,
@@ -492,7 +493,8 @@ def run_agent(
         backend.start_container(handle)
         logger.info(f"Container started: {container_name} (judge_url={judge_url})")
 
-        # 3. Prepare agent-owned assets, then install the agent runtime.
+        # 3. Ensure task-owned runtimes, then prepare and install the agent.
+        ensure_task_runtime(backend, handle, task_spec, logger)
         agent.prepare_container(backend, handle, logger)
         for i, cmd in enumerate(agent.install_cmds):
             logger.info(

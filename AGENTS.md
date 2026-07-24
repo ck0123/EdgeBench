@@ -150,6 +150,24 @@ cache, or to an empty value to disable cache injection deliberately. The
 archive must be the Linux x64 platform package, not the host macOS Codex npm
 installation.
 
+Rust-base tasks use the toolchain already embedded in their Work/Judge images
+when it matches the pinned version. SForge verifies it with a non-login shell so
+the image's Docker `PATH`, `CARGO_HOME`, and `RUSTUP_HOME` remain intact. If the
+toolchain is absent or has drifted, both container lifecycles use the pinned
+host fallback at:
+
+```text
+$HOME/.cache/sforge/rust/rust-1.88.0-x86_64-unknown-linux-gnu.tar.xz
+```
+
+The control-plane `repro_env.py bootstrap --only edgebench` command downloads
+the official archive and verifies the SHA256 recorded in
+`sforge/harness/runtime_assets.json`. `SFORGE_RUST_RUNTIME_ARCHIVE` overrides
+the path; `SFORGE_RUST_RUNTIME_SHA256` can validate a custom archive; an empty
+archive override disables fallback injection. Never download Rust or crates
+from inside a task container. CAS uses its submitted vendor tree and Jagua uses
+the image's Cargo registry cache for offline builds.
+
 Plain Codex supports either an OpenAI-compatible API endpoint or Codex OAuth.
 For API mode, `run_codex_only.sh` accepts `OPENAI_API_KEY` plus
 `OPENAI_BASE_URL` (or the corresponding `SFORGE_AGENT_*` variables) and rewrites

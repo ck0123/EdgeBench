@@ -55,6 +55,18 @@ Used when running agents via `sforge run`. These are injected as container envir
 | `SFORGE_NPM_REGISTRY_URL` | NPM registry mirror (sets `npm_config_registry` in container) |
 | `SFORGE_CLAUDE_CACHE_OPT` | Suppress Claude Code attribution header and dynamic system prompt sections for better caching on third-party proxies. Set to `1` to enable. |
 | `SFORGE_CODEX_AUTH_FILE` | Host `auth.json` used only for Codex OAuth mode; defaults to `~/.codex/auth.json`. It is not required when `SFORGE_AGENT_API_KEY` is configured. |
+| `SFORGE_CODEX_RUNTIME_ARCHIVE` | Optional host path to the pinned Linux x64 Codex archive. An empty value disables cached Codex injection. |
+| `SFORGE_RUST_RUNTIME_ARCHIVE` | Optional host path to a Rust distribution archive used when a Rust task image lacks the pinned toolchain. An empty value disables fallback injection. |
+| `SFORGE_RUST_RUNTIME_SHA256` | Optional SHA256 required for a custom `SFORGE_RUST_RUNTIME_ARCHIVE`. The default cache always uses the checksum in `runtime_assets.json`. |
+
+Rust task containers never download their compiler or crates at run time. SForge
+first verifies the pinned `cargo` and `rustc` already present in the Work or
+Judge image. Only when either is missing or has a different version does it copy
+the host cache at
+`~/.cache/sforge/rust/rust-1.88.0-x86_64-unknown-linux-gnu.tar.xz`, install it
+under `/opt/sforge-rust`, and verify both versions. Run the control-plane
+`repro_env.py bootstrap --only edgebench` command to populate and checksum this
+fallback before an offline campaign.
 
 ::: warning Direct run-time proxies
 Directly injecting `SFORGE_HTTP_PROXY` / `SFORGE_HTTPS_PROXY` into the agent container gives that container proxy-mediated network access. This is useful only for exceptional run-time dependency downloads and is **not recommended** for LLM API access.

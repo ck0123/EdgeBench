@@ -26,6 +26,7 @@ from pathlib import Path, PurePosixPath
 
 from sforge.harness.backend import ContainerBackend
 from sforge.harness.config import SForgeConfig, get_container_env
+from sforge.harness.container_runtime import ensure_task_runtime
 from sforge.harness.constants import (
     DOCKER_USER,
 )
@@ -170,6 +171,7 @@ def judge_submission(
         )
         backend.start_container(handle)
         logger.info(f"Judge container started: {handle.id}")
+        ensure_task_runtime(backend, handle, task_spec, logger)
 
         # 3. Extract archive into patch_dir (filtered by submit_paths/submit_exclude)
         if archive:

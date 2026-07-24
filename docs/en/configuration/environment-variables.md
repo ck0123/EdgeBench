@@ -43,7 +43,7 @@ Used when running agents via `sforge run`. These are injected as container envir
 
 | Variable | Purpose |
 |----------|---------|
-| `SFORGE_AGENT_API_KEY` | API key passed to the selected agent using that agent's expected env var (`ANTHROPIC_AUTH_TOKEN` or `CODEX_API_KEY`) |
+| `SFORGE_AGENT_API_KEY` | API key passed to the selected agent using that agent's expected env var (`ANTHROPIC_AUTH_TOKEN`, or both `OPENAI_API_KEY` and the `CODEX_API_KEY` compatibility alias for Codex) |
 | `SFORGE_AGENT_API_BASE_URL` | API base URL override passed through the selected agent's base-url env var when it has one |
 | `SFORGE_AGENT_MODEL` | Model override for the agent |
 | `SFORGE_AGENT_TIMEOUT` | Agent timeout in seconds |
@@ -54,6 +54,7 @@ Used when running agents via `sforge run`. These are injected as container envir
 | `SFORGE_NODEJS_MIRROR_URL` | Node.js download mirror (used during agent runtime install) |
 | `SFORGE_NPM_REGISTRY_URL` | NPM registry mirror (sets `npm_config_registry` in container) |
 | `SFORGE_CLAUDE_CACHE_OPT` | Suppress Claude Code attribution header and dynamic system prompt sections for better caching on third-party proxies. Set to `1` to enable. |
+| `SFORGE_CODEX_AUTH_FILE` | Host `auth.json` used only for Codex OAuth mode; defaults to `~/.codex/auth.json`. It is not required when `SFORGE_AGENT_API_KEY` is configured. |
 
 ::: warning Direct run-time proxies
 Directly injecting `SFORGE_HTTP_PROXY` / `SFORGE_HTTPS_PROXY` into the agent container gives that container proxy-mediated network access. This is useful only for exceptional run-time dependency downloads and is **not recommended** for LLM API access.

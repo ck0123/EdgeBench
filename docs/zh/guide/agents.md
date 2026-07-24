@@ -9,7 +9,7 @@ SForge 内置了 5 种 Agent：
 | Agent 名称 | CLI 名称 | API Key 环境变量 | 模型环境变量 | 默认模型 | Stop Hook | Auto-Resume |
 |-----------|----------|-----------------|-------------|---------|-----------|-------------|
 | Claude Code | `claude-code` | `ANTHROPIC_AUTH_TOKEN` | `ANTHROPIC_MODEL` | — | 支持 | 支持 |
-| Codex | `codex` | `CODEX_API_KEY` | `CODEX_MODEL` | — | 支持 | 支持 |
+| Codex | `codex` | API key 或 OAuth `auth.json` | `CODEX_MODEL` | — | 支持 | 支持 |
 | Codex + Goal Plus | `codex-goal-plus` | Codex `auth.json` | `CODEX_MODEL` | — | Goal Plus 项目 hook | 支持 |
 | Pi | `pi` | Pi `auth.json` | `PI_MODEL` | — | — | 支持 |
 | Pi + Goal Plus | `pi-goal-plus` | Pi `auth.json` | `PI_MODEL` | — | Goal Plus Pi hook | 支持 |
@@ -47,6 +47,38 @@ SFORGE_AGENT_API_BASE_URL="https://your-proxy.com/v1" \
 SFORGE_AGENT_API_KEY="sk-xxxx" \
 sforge run --task ad_placement_optimization --agent claude-code
 ```
+
+### Codex 认证方式
+
+Codex 支持两种互斥的认证方式：
+
+1. **OpenAI-compatible API**：设置 `SFORGE_AGENT_API_KEY`；使用自定义端点时
+   再设置 `SFORGE_AGENT_API_BASE_URL`。SForge 会让 Codex 以 Bearer token 发送
+   该 key。宿主本地服务必须使用容器可见的 `host.docker.internal`，不能直接使用
+   `127.0.0.1`：
+
+   ```bash
+   export SFORGE_AGENT_API_KEY='<local-proxy-token>'
+   export SFORGE_AGENT_API_BASE_URL='http://host.docker.internal:3788/v1'
+   sforge run --task vliw_kernel_optimization --agent codex \
+     --model gpt-5.6-sol --enable-internet
+   ```
+
+   专用 `scripts/run_codex_only.sh` 也接受 `OPENAI_API_KEY` 和
+   `OPENAI_BASE_URL`。仅在该 launcher 中，宿主 URL
+   `http://127.0.0.1:3788/v1` 会在创建 Work 容器前自动改写为
+   `http://host.docker.internal:3788/v1`。请保留 provider 的完整 API base
+   路径；当前 3788 本地代理要求使用 `/v1`。
+   这条直接改写适用于 Docker Desktop。原生 Linux 或 rootless Docker 无法访问
+   只绑定宿主 loopback 的服务；此时应建立受限的宿主 bridge，并通过
+   `SFORGE_AGENT_API_BASE_URL` 显式传入容器可见 URL。
+
+2. **Codex OAuth**：取消所有 API key/base URL 变量，通过
+   `SFORGE_CODEX_AUTH_FILE` 提供宿主登录文件（默认
+   `~/.codex/auth.json`）。SForge 只把该文件复制进 Work 容器，不记录文件内容。
+
+存在 API key 时优先使用 API 模式。只设置自定义 base URL 而未设置 key 会直接报错，
+不会静默回退到 OAuth。
 
 ### 模型覆盖
 

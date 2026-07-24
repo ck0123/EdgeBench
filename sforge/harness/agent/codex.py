@@ -61,7 +61,11 @@ base_url = "${OPENAI_BASE_URL}"
 env_key = "OPENAI_API_KEY"
 EOF
 fi''',
-        "test -s ~/.codex/auth.json && codex login status >/dev/null",
+        '''if [ -n "${OPENAI_API_KEY:-${CODEX_API_KEY:-}}" ]; then
+    echo "Codex API key authentication configured"
+else
+    test -s ~/.codex/auth.json && codex login status >/dev/null
+fi''',
     ]
     run_cmd = 'codex exec --json --dangerously-bypass-approvals-and-sandbox "$(cat {prompt_file})"'
     resume_cmd = 'codex exec --json resume --last --dangerously-bypass-approvals-and-sandbox "Continue working."'
@@ -77,43 +81,49 @@ fi''',
         handle: ContainerHandle,
         logger: logging.Logger,
     ) -> None:
-        auth_source = Path(
-            os.environ.get(
-                "SFORGE_CODEX_AUTH_FILE",
-                Path.home() / ".codex" / "auth.json",
-            )
-        ).expanduser().resolve()
-        if not auth_source.is_file():
-            raise RuntimeError(
-                "Codex auth file not found; run `codex` and log in first, or "
-                "set SFORGE_CODEX_AUTH_FILE"
-            )
+        if self._config.agent_api_key:
+            logger.info("Using Codex API key authentication; OAuth file not copied")
+        else:
+            auth_source = Path(
+                os.environ.get(
+                    "SFORGE_CODEX_AUTH_FILE",
+                    Path.home() / ".codex" / "auth.json",
+                )
+            ).expanduser().resolve()
+            if not auth_source.is_file():
+                raise RuntimeError(
+                    "Codex auth file not found; run `codex` and log in first, "
+                    "set SFORGE_CODEX_AUTH_FILE, or configure "
+                    "SFORGE_AGENT_API_KEY for API key authentication"
+                )
 
-        try:
-            auth = json.loads(auth_source.read_text())
-        except (OSError, json.JSONDecodeError) as exc:
-            raise RuntimeError("Invalid Codex auth file") from exc
-        if not isinstance(auth, dict) or not auth:
-            raise RuntimeError("Codex auth file must contain a JSON object")
+            try:
+                auth = json.loads(auth_source.read_text())
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError("Invalid Codex auth file") from exc
+            if not isinstance(auth, dict) or not auth:
+                raise RuntimeError("Codex auth file must contain a JSON object")
 
-        backend.copy_to_container(
-            handle,
-            auth_source,
-            PurePosixPath("/home/agent/.codex/auth.json"),
-        )
-        result = backend.exec_run(
-            handle,
-            [
-                "/bin/bash",
-                "-lc",
-                "chown -R agent:agent /home/agent/.codex && "
-                "chmod 600 /home/agent/.codex/auth.json",
-            ],
-            user="root",
-        )
-        if result.exit_code != 0:
-            raise RuntimeError(f"Failed to install Codex auth file: {result.output}")
-        logger.info("Copied host Codex auth into the work container")
+            backend.copy_to_container(
+                handle,
+                auth_source,
+                PurePosixPath("/home/agent/.codex/auth.json"),
+            )
+            result = backend.exec_run(
+                handle,
+                [
+                    "/bin/bash",
+                    "-lc",
+                    "chown -R agent:agent /home/agent/.codex && "
+                    "chmod 600 /home/agent/.codex/auth.json",
+                ],
+                user="root",
+            )
+            if result.exit_code != 0:
+                raise RuntimeError(
+                    f"Failed to install Codex auth file: {result.output}"
+                )
+            logger.info("Copied host Codex OAuth login into the work container")
 
         runtime_override = os.environ.get("SFORGE_CODEX_RUNTIME_ARCHIVE")
         if runtime_override is not None:
@@ -165,9 +175,15 @@ codex --version
             logger.info("Copied cached Codex Linux runtime into the work container")
 
     def augment_env(self, env: dict[str, str], model: str | None) -> None:
-        if not self._config.agent_api_base_url:
-            if "OPENAI_API_KEY" in env and "CODEX_API_KEY" not in env:
-                env["CODEX_API_KEY"] = env["OPENAI_API_KEY"]
+        api_key = env.get("OPENAI_API_KEY") or env.get("CODEX_API_KEY")
+        if self._config.agent_api_base_url and not api_key:
+            raise ValueError(
+                "SFORGE_AGENT_API_BASE_URL requires SFORGE_AGENT_API_KEY "
+                "for Codex API authentication"
+            )
+        if api_key:
+            env["OPENAI_API_KEY"] = api_key
+            env["CODEX_API_KEY"] = api_key
 
     def collect_artifacts(
         self,

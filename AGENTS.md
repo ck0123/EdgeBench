@@ -150,6 +150,15 @@ cache, or to an empty value to disable cache injection deliberately. The
 archive must be the Linux x64 platform package, not the host macOS Codex npm
 installation.
 
+Plain Codex supports either an OpenAI-compatible API endpoint or Codex OAuth.
+For API mode, `run_codex_only.sh` accepts `OPENAI_API_KEY` plus
+`OPENAI_BASE_URL` (or the corresponding `SFORGE_AGENT_*` variables) and rewrites
+a host-local `127.0.0.1`/`localhost` URL to `host.docker.internal`. For OAuth
+mode, unset all API key/base URL variables and use
+`SFORGE_CODEX_AUTH_FILE`/`~/.codex/auth.json`. Never require or copy the OAuth
+file in API mode, and never print either credential value. Preserve the full API
+base path; the local proxy on port `3788` uses `/v1`.
+
 Plain Codex reasoning effort must be explicit. The adapter defaults
 `SFORGE_CODEX_REASONING_EFFORT` to `medium` and passes it as the highest-priority
 Codex CLI override:

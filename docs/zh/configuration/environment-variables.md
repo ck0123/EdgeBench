@@ -43,7 +43,7 @@ SForge 大部分配置可通过 `SFORGE_*` 环境变量注入；仅 CLI/YAML 支
 
 | 变量 | 用途 |
 |------|------|
-| `SFORGE_AGENT_API_KEY` | 传递给所选 Agent 的 API 密钥，会映射为该 Agent 需要的环境变量（`ANTHROPIC_AUTH_TOKEN` 或 `CODEX_API_KEY`） |
+| `SFORGE_AGENT_API_KEY` | 传递给所选 Agent 的 API 密钥；会映射为该 Agent 需要的环境变量（`ANTHROPIC_AUTH_TOKEN`，或 Codex 使用的 `OPENAI_API_KEY` 及兼容别名 `CODEX_API_KEY`） |
 | `SFORGE_AGENT_API_BASE_URL` | API Base URL 覆盖，会传递给所选 Agent 支持的 base-url 环境变量 |
 | `SFORGE_AGENT_MODEL` | Agent 模型覆盖 |
 | `SFORGE_AGENT_TIMEOUT` | Agent 超时时间（秒） |
@@ -54,7 +54,7 @@ SForge 大部分配置可通过 `SFORGE_*` 环境变量注入；仅 CLI/YAML 支
 | `SFORGE_NODEJS_MIRROR_URL` | Node.js 下载镜像源（Agent 运行时安装使用） |
 | `SFORGE_NPM_REGISTRY_URL` | NPM 仓库镜像（容器内设置 `npm_config_registry`） |
 | `SFORGE_CLAUDE_CACHE_OPT` | 抑制 Claude Code 归属头和动态系统提示词段落，以便在第三方代理上获得更好的缓存命中率。设置为 `1` 启用。 |
-| `SFORGE_CODEX_AUTH_FILE` | Codex/Codex + Goal Plus 使用的宿主机 `auth.json`；默认 `~/.codex/auth.json`。文件只在运行时复制，不写入日志或提交。 |
+| `SFORGE_CODEX_AUTH_FILE` | Codex OAuth 模式使用的宿主机 `auth.json`；默认 `~/.codex/auth.json`。设置 `SFORGE_AGENT_API_KEY` 时不需要该文件。文件只在运行时复制，不写入日志或提交。 |
 | `SFORGE_PI_AUTH_FILE` | Pi/Pi + Goal Plus 使用的宿主机 `auth.json`；默认 `~/.pi/agent/auth.json`。 |
 | `SFORGE_GOAL_PLUS_REF` | Pi/Codex Goal Plus worker 容器安装的 Git branch 或 tag。 |
 | `SFORGE_GOAL_PLUS_PYTHON_DIR` | 可选的宿主机便携 Python 3.10+ 目录，用于避免容器内额外下载 Python。 |

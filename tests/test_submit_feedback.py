@@ -15,7 +15,11 @@ from sforge.harness.evolve_scripts import generate_submit_script
 from sforge.harness.config import SForgeConfig
 from sforge.harness import judge_server
 from sforge.harness.judge_server import JudgeState, SubmissionStatus
-from sforge.harness.run_agent import _install_tools, _validate_judge_registration
+from sforge.harness.run_agent import (
+    _build_agent_env,
+    _install_tools,
+    _validate_judge_registration,
+)
 
 
 def test_generated_submit_script_has_valid_shell_syntax(tmp_path) -> None:
@@ -200,7 +204,7 @@ def test_codex_prepare_container_copies_host_auth(tmp_path, monkeypatch) -> None
             return ExecResult()
 
     backend = FakeBackend()
-    agent = object.__new__(CodexAgent)
+    agent = CodexAgent(SForgeConfig())
     agent.prepare_container(
         backend,
         object(),
@@ -238,7 +242,7 @@ def test_codex_prepare_container_copies_cached_linux_runtime(
             return ExecResult(output="codex-cli 0.144.1")
 
     backend = FakeBackend()
-    agent = object.__new__(CodexAgent)
+    agent = CodexAgent(SForgeConfig())
     agent.prepare_container(
         backend,
         object(),
@@ -255,6 +259,49 @@ def test_codex_prepare_container_copies_cached_linux_runtime(
         if isinstance(command, list)
     )
     assert "command -v codex" in "\n".join(CodexAgent.install_cmds)
+
+
+def test_codex_api_mode_skips_oauth_and_maps_openai_environment(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("SFORGE_CODEX_AUTH_FILE", "/missing/auth.json")
+    monkeypatch.setenv("SFORGE_CODEX_RUNTIME_ARCHIVE", "")
+
+    class FakeBackend:
+        def copy_to_container(self, *args, **kwargs) -> None:
+            raise AssertionError("API mode must not copy an OAuth auth file")
+
+        def exec_run(self, *args, **kwargs) -> ExecResult:
+            raise AssertionError("API mode needs no credential file setup")
+
+    config = SForgeConfig(
+        agent_api_key="test-api-key",
+        agent_api_base_url="http://host.docker.internal:3788/",
+    )
+    agent = CodexAgent(config)
+    env = _build_agent_env(agent, "gpt-5.6-sol")
+
+    agent.prepare_container(
+        FakeBackend(),
+        object(),
+        logging.getLogger(__name__),
+    )
+
+    assert env["OPENAI_API_KEY"] == "test-api-key"
+    assert env["CODEX_API_KEY"] == "test-api-key"
+    assert env["OPENAI_BASE_URL"] == "http://host.docker.internal:3788/"
+    assert any("OPENAI_API_KEY" in command for command in CodexAgent.install_cmds)
+
+
+def test_codex_api_base_requires_api_key() -> None:
+    agent = CodexAgent(
+        SForgeConfig(
+            agent_api_base_url="http://host.docker.internal:3788/",
+        )
+    )
+
+    with pytest.raises(ValueError, match="SFORGE_AGENT_API_KEY"):
+        _build_agent_env(agent, "gpt-5.6-sol")
 
 
 def test_codex_run_and_resume_commands_pass_model_and_reasoning_explicitly(

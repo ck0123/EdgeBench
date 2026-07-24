@@ -515,7 +515,7 @@ def _effective_config_dict(
     if config.agent_api_base_url:
         d["api_base_url"] = config.agent_api_base_url
     if config.agent_api_key:
-        d["api_key"] = config.agent_api_key[:8] + "..."
+        d["api_key_configured"] = True
     if config.agent_extra_env:
         d["extra_env"] = config.agent_extra_env
     return d

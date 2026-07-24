@@ -7,7 +7,7 @@ SForge manages different Code Agents through a plugin-style agent registry. To r
 | Agent | CLI Name | API Key Env | Model Env | Default Model | Stop Hook | Auto-Resume |
 |-------|----------|-------------|-----------|---------------|-----------|-------------|
 | Claude Code | `claude-code` | `ANTHROPIC_AUTH_TOKEN` | `ANTHROPIC_MODEL` | -- | Yes | Yes |
-| Codex | `codex` | `CODEX_API_KEY` | `CODEX_MODEL` | -- | Yes | Yes |
+| Codex | `codex` | API key or OAuth `auth.json` | `CODEX_MODEL` | -- | Yes | Yes |
 
 Use the `--agent` flag to select an Agent:
 
@@ -35,6 +35,41 @@ SFORGE_AGENT_API_BASE_URL="https://your-proxy.com/v1" \
 SFORGE_AGENT_API_KEY="sk-xxxx" \
 sforge run --task ad_placement_optimization --agent claude-code
 ```
+
+### Codex Authentication
+
+Codex supports two mutually exclusive authentication modes:
+
+1. **OpenAI-compatible API**: set `SFORGE_AGENT_API_KEY` and, for a custom
+   endpoint, `SFORGE_AGENT_API_BASE_URL`. SForge configures Codex to send the
+   key as a Bearer token. A host-local service must use the container-visible
+   name `host.docker.internal`, not `127.0.0.1`:
+
+   ```bash
+   export SFORGE_AGENT_API_KEY='<local-proxy-token>'
+   export SFORGE_AGENT_API_BASE_URL='http://host.docker.internal:3788/v1'
+   sforge run --task vliw_kernel_optimization --agent codex \
+     --model gpt-5.6-sol --enable-internet
+   ```
+
+   The dedicated `scripts/run_codex_only.sh` launcher also accepts
+   `OPENAI_API_KEY` and `OPENAI_BASE_URL`. For that launcher only, a host URL
+   such as `http://127.0.0.1:3788/v1` is automatically rewritten to
+   `http://host.docker.internal:3788/v1` before the Work container is created.
+   Preserve the provider's complete API base path; the local proxy on port
+   `3788` requires `/v1`.
+   This direct rewrite is intended for Docker Desktop. A native Linux or
+   rootless Docker daemon cannot reach a service bound only to host loopback;
+   expose a restricted host bridge and pass its container-visible URL through
+   `SFORGE_AGENT_API_BASE_URL` instead.
+
+2. **Codex OAuth**: leave all API-key/base-URL variables unset and provide the
+   host login file through `SFORGE_CODEX_AUTH_FILE` (default:
+   `~/.codex/auth.json`). SForge copies only that file into the Work container;
+   it never records its contents.
+
+API-key mode takes precedence when an API key is present. A custom base URL
+without an API key is rejected instead of silently falling back to OAuth.
 
 ### Model Override
 

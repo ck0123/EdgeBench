@@ -31,10 +31,36 @@ def test_load_official_curves_contains_tree_task() -> None:
         ("tree_block_partitioning", 19.423611, 19.423611),
         ("ad_placement_optimization", 48_260_987_772.0, 45.85126429097374),
         ("wireless_electricity_layout", 54_075_524_923_419_384.0, 0.0),
+        ("borden_source_inversion", 78.502, 78.502),
+        ("dabic_gravity_inversion", 27.948953757117287, 27.948953757117287),
+        ("jagua_nesting_optimization", 23.644983, 23.644983),
+        ("college_english_exam_bank", 21.0, 21.0),
+        ("cta_risk_budget_optimization", 68.75, 68.75),
+        ("k12_math_recommendation", 26.111, 26.111),
+        ("portfolio_risk_calibration", 38.77, 38.77),
     ],
 )
 def test_rescale_known_formal_scores(task: str, raw: float, expected: float) -> None:
     assert REPORT.rescale_raw_score(task, raw) == pytest.approx(expected)
+
+
+def test_identity_allowlist_matches_tasks_without_rescale() -> None:
+    missing_rescale = {
+        path.stem
+        for path in (ROOT / "tasks").glob("*.json")
+        if not REPORT.load_task_config(path.stem).get("judge", {}).get("rescale")
+    }
+
+    assert missing_rescale == REPORT.IDENTITY_0_100_TASKS
+
+
+def test_unrecognized_task_without_rescale_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(REPORT, "load_task_config", lambda _task: {"judge": {}})
+
+    with pytest.raises(ValueError, match="no usable rescale result"):
+        REPORT.rescale_raw_score("unknown_task", 42.0)
 
 
 def test_tree_comparison_uses_matching_two_hour_reference() -> None:

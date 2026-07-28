@@ -22,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from sforge.harness.score_rescale import (
+    RescaleSpec,
     parse_rescale_spec,
     rescale_score,
     rescale_score_extended,
@@ -30,6 +31,17 @@ from sforge.harness.score_rescale import (
 
 OFFICIAL_HOURS = (2, 4, 6, 8, 10, 12)
 OFFICIAL_SOURCE_URL = "https://github.com/ByteDance-Seed/EdgeBench#open-source-subset-51-tasks"
+IDENTITY_0_100_TASKS = frozenset(
+    {
+        "borden_source_inversion",
+        "college_english_exam_bank",
+        "cta_risk_budget_optimization",
+        "dabic_gravity_inversion",
+        "jagua_nesting_optimization",
+        "k12_math_recommendation",
+        "portfolio_risk_calibration",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -105,9 +117,16 @@ def load_task_config(task: str) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def rescale_raw_score(task: str, raw_score: float) -> float:
+def load_task_rescale_spec(task: str) -> RescaleSpec | None:
     config = load_task_config(task)
     spec = parse_rescale_spec(config.get("judge", {}).get("rescale"))
+    if spec is None and task in IDENTITY_0_100_TASKS:
+        return RescaleSpec(kind="identity")
+    return spec
+
+
+def rescale_raw_score(task: str, raw_score: float) -> float:
+    spec = load_task_rescale_spec(task)
     score = rescale_score(spec, raw_score)
     if score is None or not math.isfinite(score):
         raise ValueError(f"task {task} has no usable rescale result for raw score {raw_score}")
@@ -116,8 +135,7 @@ def rescale_raw_score(task: str, raw_score: float) -> float:
 
 def rescale_raw_score_extended(task: str, raw_score: float) -> float:
     """Return the local diagnostic tail score without changing official scoring."""
-    config = load_task_config(task)
-    spec = parse_rescale_spec(config.get("judge", {}).get("rescale"))
+    spec = load_task_rescale_spec(task)
     score = rescale_score_extended(spec, raw_score)
     if score is None or not math.isfinite(score):
         raise ValueError(

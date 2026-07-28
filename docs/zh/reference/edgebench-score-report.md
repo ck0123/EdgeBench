@@ -89,6 +89,13 @@ python scripts/report_edgebench_scores.py --help
 51-task 公开结果表。这样任务换算逻辑和公开曲线都会随仓库更新，不需要在报告脚本中
 手工维护一份重复数据。
 
+其中 `borden_source_inversion`、`dabic_gravity_inversion`、
+`jagua_nesting_optimization`、`college_english_exam_bank`、
+`cta_risk_budget_optimization`、`k12_math_recommendation` 和
+`portfolio_risk_calibration` 的 native Judge 已直接输出 0–100 分，task JSON
+没有额外的 `judge.rescale`。报告器只对这 7 个显式 allowlist task 使用 identity
+映射并裁剪到 0–100；其他缺少 rescale 的未知 task 会报错，不会被静默当成同量纲分数。
+
 `Position including this run` 只是同量纲参考，不是正式 leaderboard 名次。Agent、
 模型版本、CPU、运行时限或其他评测设置与官方配置不一致时，汇报应写成“官方结果
 对比”或“参考位置”。如果任务不在公开的 51-task 表中，脚本仍会输出换算分，但不会

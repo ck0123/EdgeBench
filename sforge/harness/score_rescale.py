@@ -16,8 +16,9 @@
 
 Each task may define a ``rescale`` section in its JSON spec with a ``kind``
 and associated parameters.  The :func:`rescale_score` function applies the
-mapping and clips the result to ``[0, 100]``.  Unknown or missing rescale
-configs fall back to ``clip(raw, 0, 100)``.
+mapping and clips the result to ``[0, 100]``.  Unknown rescale kinds fall back
+to ``clip(raw, 0, 100)``; missing configs return ``None`` so callers must
+explicitly identify native bounded-score tasks before applying identity.
 """
 
 from __future__ import annotations

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -32,8 +33,10 @@ from sforge.harness.backend import ContainerBackend, ContainerHandle
 
 GOAL_PLUS_MAX_PARALLEL_ENV = "SFORGE_GOAL_PLUS_MAX_PARALLEL"
 GOAL_PLUS_WORKER_RUNTIME_ENV = "SFORGE_GOAL_PLUS_WORKER_RUNTIME_SECONDS"
+GOAL_PLUS_FINALIZATION_GRACE_ENV = "SFORGE_GOAL_PLUS_FINALIZATION_GRACE_SECONDS"
 DEFAULT_GOAL_PLUS_MAX_PARALLEL = 3
 DEFAULT_GOAL_PLUS_WORKER_RUNTIME_SECONDS = 1200
+DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS = 300
 
 
 def _positive_int_extra_env(
@@ -50,6 +53,27 @@ def _positive_int_extra_env(
         raise ValueError(f"{name} must be a positive integer, got {raw!r}") from exc
     if parsed < 1:
         raise ValueError(f"{name} must be a positive integer, got {raw!r}")
+    return parsed
+
+
+def _nonnegative_int_extra_env(
+    values: dict[str, str],
+    name: str,
+    default: int,
+) -> int:
+    raw = values.get(name)
+    if raw is None:
+        return default
+    try:
+        parsed = int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"{name} must be a non-negative integer, got {raw!r}"
+        ) from exc
+    if parsed < 0:
+        raise ValueError(
+            f"{name} must be a non-negative integer, got {raw!r}"
+        )
     return parsed
 
 
@@ -86,6 +110,7 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
     run_cmd = (
         'export GOAL_PLUS_OUTER_DEADLINE_AT="$SFORGE_AGENT_DEADLINE"; '
         'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
+        'HARD_REMAINING=$((SFORGE_AGENT_HARD_DEADLINE - $(date +%s))); '
         'exec codex exec --json --dangerously-bypass-approvals-and-sandbox '
         '"\\$goal-plus mode=autonomous $(cat {prompt_file})\n\n'
         'Use the Goal Plus framework to perform deep search optimization for this task. '
@@ -100,10 +125,18 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         'normal first-dispatch budget for each candidate worker, not a cap on '
         'justified reinvestment.\n'
         'The total exploration time budget for this task is '
-        '${{SFORGE_AGENT_TOTAL_BUDGET_SECONDS}} seconds. The hard deadline is Unix '
-        'timestamp ${{SFORGE_AGENT_DEADLINE}}, and ${{REMAINING}} seconds remain at '
-        'this launch. The authoritative deadline is also available in '
-        '/opt/sforge-agent-deadline. Refresh the remaining time before each '
+        '${{SFORGE_AGENT_TOTAL_BUDGET_SECONDS}} seconds. The exploration cutoff is '
+        'Unix timestamp ${{SFORGE_AGENT_DEADLINE}}, and ${{REMAINING}} exploration '
+        'seconds remain at this launch. The host provides '
+        '${{SFORGE_AGENT_FINALIZATION_GRACE_SECONDS}} additional seconds only for '
+        'final verification, selection, promotion, synchronous Judge feedback, '
+        'goal_plus_record_search_result, raw-goal audit, terminal status, and the '
+        'one final search_report call. Its hard process deadline is '
+        '${{SFORGE_AGENT_HARD_DEADLINE}}, with ${{HARD_REMAINING}} seconds remaining. '
+        'After the exploration cutoff, do not freeze/create another Search run, '
+        'launch/continue a worker, or perform more optimization. The authoritative '
+        'cutoff and hard deadline are also available in /opt/sforge-agent-deadline '
+        'and /opt/sforge-agent-hard-deadline. Refresh the exploration time before each '
         'rolling-pool decision and reserve time for final verification, selection, '
         'promotion, and Judge feedback. No round count is prescribed.\n\n'
         'EdgeBench integration requirement: Goal Plus candidate workspaces are '
@@ -119,14 +152,19 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
     resume_cmd = (
         'export GOAL_PLUS_OUTER_DEADLINE_AT="$SFORGE_AGENT_DEADLINE"; '
         'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
+        'HARD_REMAINING=$((SFORGE_AGENT_HARD_DEADLINE - $(date +%s))); '
         'SYNC_OUTPUT=$(sforge-goal-plus-submit --details --if-new 2>&1); '
         'SYNC_STATUS=$?; '
         'exec codex exec --json resume --last --dangerously-bypass-approvals-and-sandbox '
         '"Continue the active Goal Plus task. Before this resume, the EdgeBench '
         'Goal Plus promotion bridge returned exit status ${SYNC_STATUS}:\n'
         '${SYNC_OUTPUT}\n\nThe total exploration time budget is '
-        '${SFORGE_AGENT_TOTAL_BUDGET_SECONDS} seconds; the hard deadline is Unix '
-        'timestamp ${SFORGE_AGENT_DEADLINE}, and ${REMAINING} seconds remain. '
+        '${SFORGE_AGENT_TOTAL_BUDGET_SECONDS} seconds; its cutoff is Unix timestamp '
+        '${SFORGE_AGENT_DEADLINE}, and ${REMAINING} exploration seconds remain. '
+        'The finalization-only hard deadline is ${SFORGE_AGENT_HARD_DEADLINE}, with '
+        '${HARD_REMAINING} seconds remaining. Once the exploration cutoff is reached, '
+        'do not create a new Search run or launch/continue a worker; only finish the '
+        'Judge, result recording, raw-goal audit, terminal status, and final report. '
         'Restore the durable Goal Plus and Search state, then continue the Codex '
         'rolling worker pool. If the initial SearchSpec has not been frozen yet, '
         'set strategy.worker_host to codex, budget.max_parallel to '
@@ -181,6 +219,68 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         super().prepare_container(backend, handle, logger)
         prepare_goal_plus_container(backend, handle, logger)
 
+    def get_finalization_grace_seconds(self) -> int:
+        return _nonnegative_int_extra_env(
+            self._config.agent_extra_env,
+            GOAL_PLUS_FINALIZATION_GRACE_ENV,
+            DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS,
+        )
+
+    def should_resume_after_exit(
+        self,
+        backend: ContainerBackend,
+        handle: ContainerHandle,
+        logger: logging.Logger,
+    ) -> bool:
+        probe = r'''
+import json
+from pathlib import Path
+
+root = Path("/home/agent/.goal-plus")
+paths = sorted((root / "goal-plus").glob("*/goal.json"))
+records = []
+terminal = {"complete", "blocked", "abandoned"}
+for path in paths:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        continue
+    status = str(payload.get("status") or "active")
+    reports_ready = True
+    for task in payload.get("search_tasks") or []:
+        if not isinstance(task, dict) or not task.get("result_recorded_at"):
+            continue
+        for key in ("report_path", "html_report_path"):
+            value = task.get(key)
+            if not isinstance(value, str) or not value or not Path(value).is_file():
+                reports_ready = False
+    records.append({"status": status, "reports_ready": reports_ready})
+ready = bool(records) and all(
+    record["status"] in terminal and record["reports_ready"]
+    for record in records
+)
+print(json.dumps({"records": records, "ready": ready}, sort_keys=True))
+'''
+        try:
+            result = backend.exec_run(handle, ["python", "-c", probe])
+            if result.exit_code != 0:
+                logger.warning(
+                    "Goal Plus terminal-state resume probe failed: %s",
+                    result.output.strip(),
+                )
+                return True
+            payload = json.loads(result.output.strip().splitlines()[-1])
+        except Exception as exc:
+            logger.warning("Goal Plus terminal-state resume probe failed: %s", exc)
+            return True
+        if payload.get("ready") is True:
+            logger.info(
+                "Goal Plus records are terminal and final reports exist; "
+                "native Codex auto-resume is not needed"
+            )
+            return False
+        return True
+
     def install_stop_hook(
         self,
         backend: ContainerBackend,
@@ -199,6 +299,7 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         super().augment_env(env, model)
         env["GOAL_PLUS_SOURCE_PATH"] = GOAL_PLUS_CONTAINER_DIR
         env["GOAL_PLUS_ROOT"] = GOAL_PLUS_STATE_DIR
+        env["GOAL_PLUS_SEARCH_ROOT"] = GOAL_PLUS_STATE_DIR
         env["GOAL_PLUS_ROLE"] = "main"
         env["GOAL_PLUS_CODEX_ROLE"] = "main"
         if model:

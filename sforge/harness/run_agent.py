@@ -72,10 +72,21 @@ class RunResult:
     auto_submissions: int = 0
     agent_output: str = ""
     timed_out: bool = False
+    termination_reason: str = "completed"
+    budget_exhausted: bool = False
+    exploration_budget_seconds: float = 0.0
+    finalization_grace_seconds: float = 0.0
+    finalization_runtime_seconds: float = 0.0
+    hard_timeout_seconds: float = 0.0
     runtime_seconds: float = 0.0
     resume_count: int = 0
 
     def to_dict(self) -> dict:
+        budget_exhausted = self.budget_exhausted or self.termination_reason in {
+            "budget_exhausted",
+            "completed_in_finalization_grace",
+            "finalization_grace_exhausted",
+        }
         d = {
             "best_pass_rate": self.best_pass_rate,
             "best_round": self.best_round,
@@ -83,6 +94,12 @@ class RunResult:
             "agent_submissions": self.agent_submissions,
             "auto_submissions": self.auto_submissions,
             "timed_out": self.timed_out,
+            "termination_reason": self.termination_reason,
+            "budget_exhausted": budget_exhausted,
+            "exploration_budget_seconds": self.exploration_budget_seconds,
+            "finalization_grace_seconds": self.finalization_grace_seconds,
+            "finalization_runtime_seconds": self.finalization_runtime_seconds,
+            "hard_timeout_seconds": self.hard_timeout_seconds,
             "runtime_seconds": self.runtime_seconds,
             "archive_size_bytes": len(self.archive),
             "resume_count": self.resume_count,
@@ -337,6 +354,10 @@ def run_agent(
         log_dir / "run_agent.log",
         verbose=verbose,
     )
+    finalization_grace_seconds = agent.get_finalization_grace_seconds()
+    if finalization_grace_seconds < 0:
+        raise ValueError("agent finalization grace must be non-negative")
+    hard_timeout = effective_timeout + finalization_grace_seconds
 
     # judge_url is for container use; derive a host-local URL for registration/polling
     parsed_judge = urlparse(judge_url)
@@ -423,6 +444,9 @@ def run_agent(
         env["SFORGE_PATCH_DIR"] = task_spec.cwd
         env["SFORGE_SUBMIT_PATHS"] = " ".join(task_spec.submit_paths)
         env["SFORGE_AGENT_TOTAL_BUDGET_SECONDS"] = str(int(effective_timeout))
+        env["SFORGE_AGENT_FINALIZATION_GRACE_SECONDS"] = str(
+            int(finalization_grace_seconds)
+        )
         env["SFORGE_SUBMIT_EXCLUDE_FLAGS"] = " ".join(
             f"--exclude={e}" for e in task_spec.submit_exclude
         )
@@ -590,10 +614,11 @@ def run_agent(
 
         # 6. Run agent (with auto-resume on abnormal exit)
         can_resume = not disable_auto_resume and agent.resume_cmd is not None
-        remaining_timeout = effective_timeout
+        remaining_timeout = hard_timeout
         resume_count = 0
         total_runtime = 0.0
         agent_timed_out = False
+        termination_reason = "completed"
         all_output_parts: list[str] = []
         agent_live_log = log_dir / "agent_output.txt"
         MIN_RUNTIME_FOR_RESUME = 1
@@ -601,6 +626,7 @@ def run_agent(
 
         started_at = time.time()
         deadline_at = started_at + effective_timeout
+        hard_deadline_at = deadline_at + finalization_grace_seconds
         from datetime import datetime
         started_at_iso = datetime.fromtimestamp(started_at).strftime("%Y-%m-%dT%H:%M:%S")
         (log_dir / "started_at").write_text(f"{started_at_iso}\n{started_at}\n")
@@ -608,12 +634,17 @@ def run_agent(
         # Agent-specific lifecycle controllers can use this host-authored
         # deadline without counting image preparation and installation time.
         deadline_text = str(int(deadline_at))
+        hard_deadline_text = str(int(hard_deadline_at))
         deadline_result = backend.exec_run(
             handle,
             [
                 "/bin/sh",
                 "-c",
-                f"printf '%s\\n' {deadline_text} > /opt/sforge-agent-deadline",
+                (
+                    f"printf '%s\\n' {deadline_text} > /opt/sforge-agent-deadline && "
+                    f"printf '%s\\n' {hard_deadline_text} > "
+                    "/opt/sforge-agent-hard-deadline"
+                ),
             ],
             user="root",
         )
@@ -624,21 +655,30 @@ def run_agent(
             )
         deadline_check = backend.exec_run(
             handle,
-            ["cat", "/opt/sforge-agent-deadline"],
+            [
+                "/bin/sh",
+                "-c",
+                "cat /opt/sforge-agent-deadline /opt/sforge-agent-hard-deadline",
+            ],
             user="root",
         )
         if (
             deadline_check.exit_code != 0
-            or deadline_check.output.strip() != deadline_text
+            or deadline_check.output.splitlines()
+            != [deadline_text, hard_deadline_text]
         ):
             raise RuntimeError(
                 "Agent deadline verification failed inside the work container"
             )
         env["SFORGE_AGENT_DEADLINE"] = deadline_text
+        env["SFORGE_AGENT_HARD_DEADLINE"] = hard_deadline_text
         logger.info(
-            "Agent time budget installed: total=%ss, deadline=%s",
+            "Agent time budget installed: exploration=%ss, "
+            "finalization_grace=%ss, exploration_deadline=%s, hard_deadline=%s",
             int(effective_timeout),
+            int(finalization_grace_seconds),
             deadline_text,
+            hard_deadline_text,
         )
 
         on_chunk_cb = None
@@ -705,9 +745,35 @@ def run_agent(
                     )
                     continue
                 agent_timed_out = True
+                if shutdown_event is not None and shutdown_event.is_set():
+                    termination_reason = "interrupted"
+                elif remaining_timeout <= 1:
+                    termination_reason = (
+                        "finalization_grace_exhausted"
+                        if finalization_grace_seconds
+                        else "budget_exhausted"
+                    )
+                else:
+                    termination_reason = "segment_timeout"
                 break
 
+            if total_runtime >= effective_timeout:
+                termination_reason = "completed_in_finalization_grace"
             if not can_resume:
+                break
+            try:
+                should_resume = agent.should_resume_after_exit(
+                    backend,
+                    handle,
+                    logger,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Agent completion probe failed; preserving auto-resume: %s",
+                    exc,
+                )
+                should_resume = True
+            if not should_resume:
                 break
             if seg_result.elapsed_seconds < MIN_RUNTIME_FOR_RESUME:
                 output_tail = seg_result.output.strip()[-1000:]
@@ -728,6 +794,15 @@ def run_agent(
 
         agent_output = "\n".join(all_output_parts)
         runtime = total_runtime
+        budget_exhausted = runtime >= effective_timeout
+        finalization_runtime_seconds = max(0.0, runtime - effective_timeout)
+        lifecycle_result = {
+            "budget_exhausted": budget_exhausted,
+            "exploration_budget_seconds": float(effective_timeout),
+            "finalization_grace_seconds": float(finalization_grace_seconds),
+            "finalization_runtime_seconds": finalization_runtime_seconds,
+            "hard_timeout_seconds": float(hard_timeout),
+        }
         logger.info(
             f"Agent finished: runtime={runtime:.1f}s, timed_out={agent_timed_out}, "
             f"resumes={resume_count}"
@@ -796,6 +871,8 @@ def run_agent(
                 auto_submissions=0,
                 agent_output=agent_output,
                 timed_out=agent_timed_out,
+                termination_reason=termination_reason,
+                **lifecycle_result,
                 runtime_seconds=runtime,
                 resume_count=resume_count,
             )
@@ -890,6 +967,8 @@ def run_agent(
                 auto_submissions=auto_subs,
                 agent_output=agent_output,
                 timed_out=agent_timed_out,
+                termination_reason=termination_reason,
+                **lifecycle_result,
                 runtime_seconds=runtime,
                 resume_count=resume_count,
             )
@@ -964,6 +1043,7 @@ def run_agent(
             auto_submissions=auto_subs,
             agent_output="Stopped by user (Ctrl+C)",
             timed_out=False,
+            termination_reason="interrupted",
             resume_count=resume_count,
         )
     except Exception as e:
@@ -998,6 +1078,7 @@ def run_agent(
             auto_submissions=auto_subs,
             agent_output=str(e),
             timed_out=False,
+            termination_reason="error",
             resume_count=locals().get("resume_count", 0),
         )
     finally:

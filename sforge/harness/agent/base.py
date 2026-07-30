@@ -79,6 +79,21 @@ class Agent(abc.ABC):
     ) -> None:
         """Collect optional agent-owned state before the work container stops."""
 
+    def get_finalization_grace_seconds(self) -> int:
+        """Return host time reserved after the agent's exploration cutoff."""
+
+        return 0
+
+    def should_resume_after_exit(
+        self,
+        backend: ContainerBackend,
+        handle: ContainerHandle,
+        logger: logging.Logger,
+    ) -> bool:
+        """Return whether a normally exited native session should be resumed."""
+
+        return True
+
     def format_run_cmd(
         self,
         prompt_path: str,

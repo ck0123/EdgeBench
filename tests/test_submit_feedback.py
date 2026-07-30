@@ -10,10 +10,11 @@ from types import SimpleNamespace
 import pytest
 
 from sforge.harness.backend.base import ExecResult
-from sforge.harness.agent.codex import CodexAgent
+from sforge.harness.agent.codex import CodexAgent, _generate_codex_stop_hook
 from sforge.harness.evolve_scripts import generate_submit_script
 from sforge.harness.config import SForgeConfig
 from sforge.harness import judge_server
+from sforge.harness.run_agent import RunResult
 from sforge.harness.judge_server import JudgeState, SubmissionStatus
 from sforge.harness.run_agent import (
     _build_agent_env,
@@ -320,9 +321,53 @@ def test_codex_run_and_resume_commands_pass_model_and_reasoning_explicitly(
         resume=True,
     )
 
-    expected = "codex exec -c 'model_reasoning_effort=\"medium\"' --model gpt-5.5"
+    expected = (
+        "codex exec --dangerously-bypass-hook-trust "
+        "-c 'model_reasoning_effort=\"medium\"' --model gpt-5.5"
+    )
     assert run_cmd.startswith(f"{expected} --json ")
     assert resume_cmd.startswith(f"{expected} --json resume ")
+
+
+def test_run_result_separates_budget_exhaustion_from_raw_timeout() -> None:
+    result = RunResult(
+        timed_out=True,
+        termination_reason="budget_exhausted",
+        runtime_seconds=600.1,
+        best_pass_rate=1.0,
+        best_score=2258.0,
+        total_rounds=1,
+        exploration_budget_seconds=600.0,
+        finalization_grace_seconds=300.0,
+        finalization_runtime_seconds=15.0,
+        hard_timeout_seconds=900.0,
+    )
+
+    payload = result.to_dict()
+
+    assert payload["timed_out"] is True
+    assert payload["termination_reason"] == "budget_exhausted"
+    assert payload["budget_exhausted"] is True
+    assert payload["exploration_budget_seconds"] == 600.0
+    assert payload["finalization_grace_seconds"] == 300.0
+    assert payload["finalization_runtime_seconds"] == 15.0
+    assert payload["hard_timeout_seconds"] == 900.0
+
+
+def test_run_result_marks_normal_completion_during_finalization_grace() -> None:
+    payload = RunResult(
+        timed_out=False,
+        termination_reason="completed_in_finalization_grace",
+        runtime_seconds=615.0,
+        exploration_budget_seconds=600.0,
+        finalization_grace_seconds=300.0,
+        finalization_runtime_seconds=15.0,
+        hard_timeout_seconds=900.0,
+    ).to_dict()
+
+    assert payload["timed_out"] is False
+    assert payload["budget_exhausted"] is True
+    assert payload["termination_reason"] == "completed_in_finalization_grace"
 
 
 def test_codex_rejects_unknown_reasoning_effort(monkeypatch) -> None:
@@ -331,6 +376,44 @@ def test_codex_rejects_unknown_reasoning_effort(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="SFORGE_CODEX_REASONING_EFFORT"):
         agent.format_run_cmd("/tmp/prompt.md", model="gpt-5.5")
+
+
+def test_codex_stop_hook_persists_structured_event() -> None:
+    hook_script = _generate_codex_stop_hook()
+
+    assert 'hook_event_name\\":\\"Stop' in hook_script
+    assert 'decision\\":\\"block' in hook_script
+    assert 'started_at\\":\\"$started_at' in hook_script
+    assert 'finished_at\\":\\"$finished_at' in hook_script
+    assert 'event_dir="${CODEX_HOME:-/home/agent/.codex}/hook-events"' in hook_script
+
+
+def test_codex_collect_artifacts_preserves_sessions_and_hook_events(
+    tmp_path,
+) -> None:
+    class FakeBackend:
+        def __init__(self) -> None:
+            self.paths = []
+
+        def copy_from_container(self, handle, path):
+            self.paths.append(str(path))
+            return f"archive:{path}".encode()
+
+    backend = FakeBackend()
+    agent = object.__new__(CodexAgent)
+    agent.collect_artifacts(
+        backend,
+        object(),
+        tmp_path,
+        logging.getLogger(__name__),
+    )
+
+    assert backend.paths == [
+        "/home/agent/.codex/sessions",
+        "/home/agent/.codex/hook-events",
+    ]
+    assert (tmp_path / "codex-sessions.tar").is_file()
+    assert (tmp_path / "codex-hook-events.tar").is_file()
 
 
 def test_goal_plus_bridge_install_uses_explicit_container_commands(tmp_path) -> None:

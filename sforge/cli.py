@@ -333,7 +333,22 @@ def _run_single_task(
     )
 
     print(f"\nAgent completed in {result.runtime_seconds:.1f}s")
-    print(f"  Timed out:        {result.timed_out}")
+    termination_label = {
+        "budget_exhausted": "Budget reached",
+        "completed_in_finalization_grace": "Completed in finalization grace",
+        "finalization_grace_exhausted": "Finalization grace exhausted",
+        "segment_timeout": "Segment timeout",
+        "interrupted": "Interrupted",
+        "error": "Error",
+        "completed": "Completed",
+    }.get(result.termination_reason, result.termination_reason.replace("_", " ").title())
+    print(f"  Termination:      {termination_label}")
+    if result.finalization_grace_seconds:
+        print(
+            "  Budget split:     "
+            f"{result.exploration_budget_seconds:.0f}s exploration + "
+            f"{result.finalization_grace_seconds:.0f}s finalization grace"
+        )
     if task_spec.game_mode:
         print(f"  Game sessions:    {result.total_rounds}")
         if result.best_score is not None:

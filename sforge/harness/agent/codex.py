@@ -194,15 +194,26 @@ codex --version
     ) -> None:
         """Preserve Codex rollouts for usage accounting without copying auth."""
 
-        try:
-            archive = backend.copy_from_container(
-                handle, PurePosixPath("/home/agent/.codex/sessions")
-            )
-            if archive:
-                (log_dir / "codex-sessions.tar").write_bytes(archive)
-                logger.info("Collected Codex sessions: %d bytes", len(archive))
-        except Exception as exc:
-            logger.warning("Failed to collect Codex sessions: %s", exc)
+        artifacts = (
+            (
+                PurePosixPath("/home/agent/.codex/sessions"),
+                "codex-sessions.tar",
+                "Codex sessions",
+            ),
+            (
+                PurePosixPath("/home/agent/.codex/hook-events"),
+                "codex-hook-events.tar",
+                "Codex hook events",
+            ),
+        )
+        for container_path, archive_name, label in artifacts:
+            try:
+                archive = backend.copy_from_container(handle, container_path)
+                if archive:
+                    (log_dir / archive_name).write_bytes(archive)
+                    logger.info("Collected %s: %d bytes", label, len(archive))
+            except Exception as exc:
+                logger.warning("Failed to collect %s: %s", label, exc)
 
     def format_run_cmd(
         self,
@@ -248,6 +259,11 @@ codex --version
                 "codex exec", 'codex exec -c web_search="disabled"', 1,
             )
 
+        cmd = cmd.replace(
+            "codex exec",
+            "codex exec --dangerously-bypass-hook-trust",
+            1,
+        )
         return cmd
 
     def install_stop_hook(
@@ -286,6 +302,21 @@ codex --version
 def _generate_codex_stop_hook() -> str:
     return r"""#!/bin/bash
 cat >/dev/null
+set -u
+event_dir="${CODEX_HOME:-/home/agent/.codex}/hook-events"
+mkdir -p "$event_dir"
+started_ns="$(date -u +'%s%N')"
+started_at="$(date -u +'%Y-%m-%dT%H:%M:%S.%NZ')"
+invocation_id="stop-$started_ns-$$-${RANDOM:-0}"
+event_path="$event_dir/$invocation_id.json"
+temporary_path="$event_path.tmp"
+finished_at="$(date -u +'%Y-%m-%dT%H:%M:%S.%NZ')"
+finished_ns="$(date -u +'%s%N')"
+duration_ms="$(( (finished_ns - started_ns) / 1000000 ))"
+printf '%s\n' \
+  "{\"schema_version\":1,\"hook_event_name\":\"Stop\",\"invocation_id\":\"$invocation_id\",\"started_at\":\"$started_at\",\"finished_at\":\"$finished_at\",\"duration_ms\":$duration_ms,\"decision\":\"block\",\"outcome\":\"blocked\",\"reason\":\"Do not stop. Continue working on the implementation.\"}" \
+  >"$temporary_path"
+mv "$temporary_path" "$event_path"
 echo '{"decision":"block","reason":"Do not stop. Continue working on the implementation."}'
 """
 

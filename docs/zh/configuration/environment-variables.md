@@ -61,6 +61,14 @@ SForge 大部分配置可通过 `SFORGE_*` 环境变量注入；仅 CLI/YAML 支
 | `SFORGE_PI_AUTH_FILE` | Pi/Pi + Goal Plus 使用的宿主机 `auth.json`；默认 `~/.pi/agent/auth.json`。 |
 | `SFORGE_GOAL_PLUS_REF` | Pi/Codex Goal Plus worker 容器安装的 Git branch 或 tag。 |
 | `SFORGE_GOAL_PLUS_PYTHON_DIR` | 可选的宿主机便携 Python 3.10+ 目录，用于避免容器内额外下载 Python。 |
+| `SFORGE_GOAL_PLUS_FINALIZATION_GRACE_SECONDS` | Codex + Goal Plus 在探索预算结束后用于最终验证、同步 Judge、记录结果、终态审计和生成报告的额外宽限期；默认 `300` 秒，设为 `0` 可禁用。该时间不允许继续创建 Search run、启动/恢复 worker 或进行新优化。 |
+
+对 `codex-goal-plus` 而言，`SFORGE_AGENT_TIMEOUT` / `--timeout` 表示探索预算，
+不是整个宿主进程的硬截止。宿主会另外安装
+`/opt/sforge-agent-hard-deadline`，其值为探索截止加上
+`SFORGE_GOAL_PLUS_FINALIZATION_GRACE_SECONDS`。最终结果会分别记录探索预算、
+收尾宽限期、实际收尾耗时和硬截止；在宽限期内正常完成属于成功收尾，不应显示为
+超时报错。
 
 Rust 任务容器不会在运行期间下载编译器或 crates。SForge 会先验证 Work/Judge
 镜像中已有的固定版本 `cargo` 与 `rustc`；仅当工具缺失或版本不符时，才复制

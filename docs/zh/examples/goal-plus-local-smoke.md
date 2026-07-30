@@ -67,3 +67,28 @@ python3 -m sforge.cli run \
 建议先用 10–30 分钟验证安装、verifier、提交循环和日志，再增加预算。
 
 6 个 task 的顺序长跑配置见 [Pi + Goal Plus 夜间顺序运行配置](./pi-goal-plus-overnight.md)。
+
+## Codex + Goal Plus 的探索与收尾预算
+
+`codex-goal-plus` 默认把 `--timeout` 作为探索预算，并额外提供 300 秒收尾宽限期。
+例如 `--timeout 600` 会在 10 分钟时停止创建/恢复候选，但宿主进程最晚可运行到
+15 分钟，以便完成最终 verifier、`search_select`、`search_promote`、同步 Judge、
+`goal_plus_record_search_result`、raw-goal audit、终态落盘和一次
+`search_report`。这段宽限期不能用于继续优化。
+
+如需覆盖或禁用宽限期，可通过 agent extra env 设置：
+
+```bash
+SFORGE_AGENT_EXTRA_ENV="SFORGE_GOAL_PLUS_FINALIZATION_GRACE_SECONDS=120" \
+python3 -m sforge.cli run \
+  --task vliw_kernel_optimization \
+  --agent codex-goal-plus \
+  --model gpt-5.6-sol \
+  --timeout 600 \
+  --enable-internet \
+  --run-id vliw-codex-goal-plus-smoke
+```
+
+正常情况下，宽限期内完成会记录为 `completed_in_finalization_grace`，而不是
+`timeout`。Codex 正常退出后，适配器还会检查持久化的 Goal Plus 状态；只有所有
+Goal 记录都已终止且每个已记录 Search run 的报告实际存在时，才会跳过自动恢复。

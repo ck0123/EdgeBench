@@ -4,7 +4,10 @@ import logging
 import subprocess
 from pathlib import Path
 
-from sforge.harness.agent.codex_goal_plus import CodexGoalPlusAgent
+from sforge.harness.agent.codex_goal_plus import (
+    DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS,
+    CodexGoalPlusAgent,
+)
 from sforge.harness.agent.codex_goal_plus_solo import CodexGoalPlusSoloAgent
 from sforge.harness.agent.factory import get_agent_class
 from sforge.harness.agent.goal_plus_runtime import prepare_goal_plus_container
@@ -72,7 +75,9 @@ def test_codex_goal_plus_run_and_resume_commands() -> None:
     assert run_cmd.startswith('export GOAL_PLUS_OUTER_DEADLINE_AT=')
     assert "model_reasoning_effort=\"medium\"" in run_cmd
     assert "--model gpt-5.5" in run_cmd
-    assert "codex exec -c" in run_cmd
+    assert "--dangerously-bypass-hook-trust" in run_cmd
+    assert "--dangerously-bypass-hook-trust" in resume_cmd
+    assert "codex exec --dangerously-bypass-hook-trust -c" in run_cmd
     assert "--json" in run_cmd
     assert "\\$goal-plus mode=autonomous" in run_cmd
     assert "strategy.worker_host to codex" in run_cmd
@@ -84,8 +89,16 @@ def test_codex_goal_plus_run_and_resume_commands() -> None:
     assert "sforge-goal-plus-submit --details --if-new" in resume_cmd
     assert "--model gpt-5.5 --json resume --last" in resume_cmd
     assert "--json" in resume_cmd
+    assert "SFORGE_AGENT_FINALIZATION_GRACE_SECONDS" in run_cmd
+    assert "SFORGE_AGENT_HARD_DEADLINE" in run_cmd
+    assert "After the exploration cutoff" in run_cmd
+    assert "finalization-only hard deadline" in resume_cmd
     assert "${SYNC_STATUS}" in resume_cmd
     assert "${{SYNC_STATUS}}" not in resume_cmd
+    assert (
+        agent.get_finalization_grace_seconds()
+        == DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS
+    )
 
 
 def test_codex_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> None:
@@ -93,6 +106,7 @@ def test_codex_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> No
         agent_extra_env={
             "SFORGE_GOAL_PLUS_MAX_PARALLEL": "5",
             "SFORGE_GOAL_PLUS_WORKER_RUNTIME_SECONDS": "900",
+            "SFORGE_GOAL_PLUS_FINALIZATION_GRACE_SECONDS": "180",
         }
     )
     agent = CodexGoalPlusAgent(config)
@@ -106,6 +120,50 @@ def test_codex_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> No
     assert '"max_runtime_seconds": 900' in run_cmd
     assert "budget.max_parallel to 5" in resume_cmd
     assert '"max_runtime_seconds": 900' in resume_cmd
+    assert agent.get_finalization_grace_seconds() == 180
+
+
+def test_codex_goal_plus_allows_disabling_finalization_grace() -> None:
+    agent = CodexGoalPlusAgent(
+        SForgeConfig(
+            agent_extra_env={
+                "SFORGE_GOAL_PLUS_FINALIZATION_GRACE_SECONDS": "0",
+            }
+        )
+    )
+
+    assert agent.get_finalization_grace_seconds() == 0
+
+
+def test_codex_goal_plus_skips_resume_only_after_terminal_reports_exist() -> None:
+    class FakeBackend:
+        def __init__(self, ready: bool) -> None:
+            self.ready = ready
+
+        def exec_run(self, handle, command):
+            return ExecResult(
+                output=(
+                    '{"ready": true, "records": [{"status": "complete", '
+                    '"reports_ready": true}]}'
+                    if self.ready
+                    else '{"ready": false, "records": [{"status": "active", '
+                    '"reports_ready": false}]}'
+                )
+            )
+
+    agent = CodexGoalPlusAgent(SForgeConfig())
+    logger = logging.getLogger(__name__)
+
+    assert agent.should_resume_after_exit(
+        FakeBackend(ready=True),
+        object(),
+        logger,
+    ) is False
+    assert agent.should_resume_after_exit(
+        FakeBackend(ready=False),
+        object(),
+        logger,
+    ) is True
 
 
 def test_codex_goal_plus_rejects_invalid_experiment_concurrency() -> None:
@@ -150,6 +208,7 @@ def test_codex_goal_plus_sets_shared_state_environment() -> None:
     agent.augment_env(env, "gpt-5.5")
 
     assert env["GOAL_PLUS_ROOT"] == "/home/agent/.goal-plus"
+    assert env["GOAL_PLUS_SEARCH_ROOT"] == "/home/agent/.goal-plus"
     assert env["GOAL_PLUS_SOURCE_PATH"] == "/opt/goal-plus"
     assert env["GOAL_PLUS_ROLE"] == "main"
     assert env["GOAL_PLUS_CODEX_ROLE"] == "main"

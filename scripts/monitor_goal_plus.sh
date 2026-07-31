@@ -245,7 +245,7 @@ for run_path in run_paths:
     print(
         f"{run_id}: state={run.get('state', '-')} direction={direction} "
         f"runtime_best={score_text(run.get('best_score'))} "
-        f"candidates={run.get('candidates_total', 0)}/{budget.get('max_candidates', '-')} "
+        f"candidates={run.get('candidates_total', 0)} "
         f"parallel={budget.get('max_parallel', '-')}"
     )
 

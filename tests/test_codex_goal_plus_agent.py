@@ -102,7 +102,8 @@ def test_codex_goal_plus_run_and_resume_commands() -> None:
     assert "--json" in run_cmd
     assert "\\$goal-plus mode=autonomous" in run_cmd
     assert "strategy.worker_host to codex" in run_cmd
-    assert "budget.max_parallel to 3" in run_cmd
+    assert "set budget.max_parallel to 3" in run_cmd
+    assert "omit the deprecated budget.max_candidates field" in run_cmd
     assert '"max_runtime_seconds": 1200' in run_cmd
     assert "do not prescribe a turn limit" in run_cmd
     assert '"max_turns"' not in run_cmd
@@ -125,7 +126,7 @@ def test_codex_goal_plus_run_and_resume_commands() -> None:
 def test_codex_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> None:
     config = SForgeConfig(
         agent_extra_env={
-            "SFORGE_GOAL_PLUS_MAX_PARALLEL": "5",
+            "SFORGE_GOAL_PLUS_PARALLEL_NUM": "5",
             "SFORGE_GOAL_PLUS_WORKER_RUNTIME_SECONDS": "900",
             "SFORGE_GOAL_PLUS_FINALIZATION_GRACE_SECONDS": "180",
         }
@@ -137,7 +138,7 @@ def test_codex_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> No
         "/tmp/prompt.md", model="gpt-5.5", resume=True
     )
 
-    assert "budget.max_parallel to 5" in run_cmd
+    assert "set budget.max_parallel to 5" in run_cmd
     assert '"max_runtime_seconds": 900' in run_cmd
     assert "budget.max_parallel to 5" in resume_cmd
     assert '"max_runtime_seconds": 900' in resume_cmd
@@ -147,7 +148,7 @@ def test_codex_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> No
 def test_pi_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> None:
     config = SForgeConfig(
         agent_extra_env={
-            "SFORGE_GOAL_PLUS_MAX_PARALLEL": "4",
+            "SFORGE_GOAL_PLUS_PARALLEL_NUM": "4",
             "SFORGE_GOAL_PLUS_WORKER_RUNTIME_SECONDS": "720",
             "SFORGE_GOAL_PLUS_FINALIZATION_GRACE_SECONDS": "150",
         }
@@ -161,7 +162,7 @@ def test_pi_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> None:
 
     assert "strategy.worker_host to pi" in run_cmd
     assert '--thinking "$SFORGE_PI_REASONING_EFFORT"' in run_cmd
-    assert "budget.max_parallel to 4" in run_cmd
+    assert "set budget.max_parallel to 4" in run_cmd
     assert '"max_runtime_seconds": 720' in run_cmd
     assert '"max_turns"' not in run_cmd
     assert "budget.max_parallel to 4" in resume_cmd
@@ -321,14 +322,14 @@ def test_goal_plus_live_status_probe_reads_pi_durable_state(tmp_path) -> None:
 def test_codex_goal_plus_rejects_invalid_experiment_concurrency() -> None:
     agent = CodexGoalPlusAgent(
         SForgeConfig(
-            agent_extra_env={"SFORGE_GOAL_PLUS_MAX_PARALLEL": "0"}
+            agent_extra_env={"SFORGE_GOAL_PLUS_PARALLEL_NUM": "0"}
         )
     )
 
     try:
         agent.format_run_cmd("/tmp/prompt.md", model="gpt-5.5")
     except ValueError as exc:
-        assert "SFORGE_GOAL_PLUS_MAX_PARALLEL" in str(exc)
+        assert "SFORGE_GOAL_PLUS_PARALLEL_NUM" in str(exc)
     else:
         raise AssertionError("expected invalid Goal Plus concurrency to fail")
 
@@ -344,12 +345,12 @@ def test_codex_goal_plus_solo_enforces_one_long_lived_worker() -> None:
     assert "model_reasoning_effort=\"medium\"" in run_cmd
     assert "--model gpt-5.5" in run_cmd
     assert "budget.max_parallel=1" in run_cmd
-    assert "budget.max_candidates=1" in run_cmd
+    assert "omit deprecated budget.max_candidates" in run_cmd
     assert '\"max_runtime_seconds\":7200' in run_cmd
     assert "Do not set max_turns" in run_cmd
     assert "do not make optimization judgments" in resume_cmd
     assert "max_parallel=1" in resume_cmd
-    assert "max_candidates=1" in resume_cmd
+    assert "omit deprecated max_candidates" in resume_cmd
     assert "7200-second worker lease" in resume_cmd
 
 

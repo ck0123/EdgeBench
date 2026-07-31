@@ -22,11 +22,11 @@ from pathlib import Path
 from sforge.harness.agent.codex import CodexAgent, _enable_codex_hooks
 from sforge.harness.agent.goal_plus_runtime import (
     DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS,
-    DEFAULT_GOAL_PLUS_MAX_PARALLEL,
+    DEFAULT_GOAL_PLUS_PARALLEL_NUM,
     DEFAULT_GOAL_PLUS_WORKER_RUNTIME_SECONDS,
     GOAL_PLUS_CONTAINER_DIR,
     GOAL_PLUS_FINALIZATION_GRACE_ENV,
-    GOAL_PLUS_MAX_PARALLEL_ENV,
+    GOAL_PLUS_PARALLEL_NUM_ENV,
     GOAL_PLUS_STATE_DIR,
     GOAL_PLUS_WORKER_RUNTIME_ENV,
     collect_goal_plus_live_status,
@@ -79,10 +79,9 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         '"\\$goal-plus mode=autonomous $(cat {prompt_file})\n\n'
         'Use the Goal Plus framework to perform deep search optimization for this task. '
         'For the initial frozen SearchSpec, set strategy.worker_host to codex and '
-        'budget.max_parallel to __GOAL_PLUS_MAX_PARALLEL__. Choose '
-        'budget.max_candidates yourself from the '
-        'remaining task time and the search plan. Prefer a small number of serious '
-        'directions and deep reinvestment over shallow breadth. Set '
+        'set budget.max_parallel to __GOAL_PLUS_PARALLEL_NUM__ and omit the '
+        'deprecated budget.max_candidates field. max_parallel is the single '
+        'EdgeBench K value. Set '
         'strategy.worker_budget to {{\"max_runtime_seconds\": '
         '__GOAL_PLUS_WORKER_RUNTIME_SECONDS__, \"on_exceed\": \"interrupt\"}}; '
         'do not prescribe a turn limit. This is the '
@@ -131,9 +130,9 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         'Judge, result recording, raw-goal audit, terminal status, and final report. '
         'Restore the durable Goal Plus and Search state, then continue the Codex '
         'rolling worker pool. If the initial SearchSpec has not been frozen yet, '
-        'set strategy.worker_host to codex, budget.max_parallel to '
-        '__GOAL_PLUS_MAX_PARALLEL__, choose '
-        'budget.max_candidates from the remaining time, and set '
+        'set strategy.worker_host to codex and budget.max_parallel to '
+        '__GOAL_PLUS_PARALLEL_NUM__; omit deprecated budget.max_candidates. '
+        'max_parallel is the single EdgeBench K value. Set '
         'strategy.worker_budget to {\"max_runtime_seconds\": '
         '__GOAL_PLUS_WORKER_RUNTIME_SECONDS__, \"on_exceed\": \"interrupt\"} '
         'without a turn limit. After every '
@@ -158,10 +157,10 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
             internet=internet,
             resume=resume,
         )
-        max_parallel = positive_int_extra_env(
+        parallel_num = positive_int_extra_env(
             self._config.agent_extra_env,
-            GOAL_PLUS_MAX_PARALLEL_ENV,
-            DEFAULT_GOAL_PLUS_MAX_PARALLEL,
+            GOAL_PLUS_PARALLEL_NUM_ENV,
+            DEFAULT_GOAL_PLUS_PARALLEL_NUM,
         )
         worker_runtime = positive_int_extra_env(
             self._config.agent_extra_env,
@@ -169,7 +168,7 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
             DEFAULT_GOAL_PLUS_WORKER_RUNTIME_SECONDS,
         )
         return cmd.replace(
-            "__GOAL_PLUS_MAX_PARALLEL__", str(max_parallel)
+            "__GOAL_PLUS_PARALLEL_NUM__", str(parallel_num)
         ).replace(
             "__GOAL_PLUS_WORKER_RUNTIME_SECONDS__", str(worker_runtime)
         )

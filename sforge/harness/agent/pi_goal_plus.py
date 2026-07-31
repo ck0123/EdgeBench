@@ -20,10 +20,18 @@ import logging
 from pathlib import Path
 
 from sforge.harness.agent.goal_plus_runtime import (
+    DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS,
+    DEFAULT_GOAL_PLUS_MAX_PARALLEL,
+    DEFAULT_GOAL_PLUS_WORKER_RUNTIME_SECONDS,
     GOAL_PLUS_CONTAINER_DIR,
+    GOAL_PLUS_FINALIZATION_GRACE_ENV,
+    GOAL_PLUS_MAX_PARALLEL_ENV,
     GOAL_PLUS_STATE_DIR,
+    GOAL_PLUS_WORKER_RUNTIME_ENV,
     collect_goal_plus_artifacts,
     goal_plus_runtime_install_cmds,
+    nonnegative_int_extra_env,
+    positive_int_extra_env,
     prepare_goal_plus_container,
 )
 from sforge.harness.agent.pi import PiAgent
@@ -49,33 +57,39 @@ test -f /opt/goal-plus/.pi/extensions/goal-plus.ts
 mkdir -p /home/agent/.goal-plus''',
     ]
     run_cmd = (
+        'export GOAL_PLUS_OUTER_DEADLINE_AT="$SFORGE_AGENT_DEADLINE"; '
         'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
+        'HARD_REMAINING=$((SFORGE_AGENT_HARD_DEADLINE - $(date +%s))); '
         'exec pi -p --mode json '
         '-e /opt/goal-plus/.pi/extensions/goal-plus.ts '
         '--provider openai-codex --model "$PI_MODEL" '
+        '--thinking "$SFORGE_PI_REASONING_EFFORT" '
         '"/goal-plus $(cat {prompt_file})\n\n'
         'Use the Goal Plus framework to perform deep search optimization for this task.\n'
-        'For the initial frozen SearchSpec, set budget.max_parallel to 3 and '
+        'For the initial frozen SearchSpec, set strategy.worker_host to pi and '
+        'budget.max_parallel to __GOAL_PLUS_MAX_PARALLEL__ and '
         'choose budget.max_candidates yourself from the remaining task time and '
         'the search plan. Prefer a small number of serious directions and deep '
         'reinvestment over shallow breadth. Set strategy.worker_budget to '
-        '{{"max_runtime_seconds": 1200, "max_turns": 40, '
-        '"on_exceed": "interrupt"}}; this is the normal first-round budget for '
-        'each candidate worker, not a cap on justified reinvestment. If a '
-        'first-round proposal is already a particularly valuable macro direction, '
-        'you may give it a larger one-dispatch worker_budgets entry.\n'
+        '{{"max_runtime_seconds": __GOAL_PLUS_WORKER_RUNTIME_SECONDS__, '
+        '"on_exceed": "interrupt"}}; do not prescribe a turn limit. This is the '
+        'normal first-dispatch budget for each candidate worker, not a cap on '
+        'justified reinvestment.\n'
         'The total exploration time budget for this task is '
-        '${{SFORGE_AGENT_TOTAL_BUDGET_SECONDS}} seconds. The hard deadline is Unix '
-        'timestamp ${{SFORGE_AGENT_DEADLINE}}, and ${{REMAINING}} seconds remain at '
-        'this launch. The authoritative deadline is also available in '
-        '/opt/sforge-agent-deadline. Use this time information to decide the '
-        'search budget, number of rounds, and final-verification time yourself; '
-        'no round count is prescribed. Refresh the remaining time before deciding '
-        'whether to start each next search round. After every completed batch, '
-        'inspect each candidate research_summary and verifier trajectory. '
-        'Selectively redispatch valuable directions with an explicit larger '
-        'one-dispatch worker_budget; do not give every candidate the same extra '
-        'time and do not stop a promising worker merely after a few artifacts.\n\n'
+        '${{SFORGE_AGENT_TOTAL_BUDGET_SECONDS}} seconds. The exploration cutoff is '
+        'Unix timestamp ${{SFORGE_AGENT_DEADLINE}}, and ${{REMAINING}} exploration '
+        'seconds remain at this launch. The host provides '
+        '${{SFORGE_AGENT_FINALIZATION_GRACE_SECONDS}} additional seconds only for '
+        'final verification, selection, promotion, synchronous Judge feedback, '
+        'goal_plus_record_search_result, raw-goal audit, terminal status, and the '
+        'one final search_report call. Its hard process deadline is '
+        '${{SFORGE_AGENT_HARD_DEADLINE}}, with ${{HARD_REMAINING}} seconds remaining. '
+        'After the exploration cutoff, do not freeze/create another Search run, '
+        'launch/continue a worker, or perform more optimization. The authoritative '
+        'cutoff and hard deadline are also available in /opt/sforge-agent-deadline '
+        'and /opt/sforge-agent-hard-deadline. Refresh the exploration time before '
+        'each rolling-pool decision and reserve time for final verification, '
+        'selection, promotion, and Judge feedback. No round count is prescribed.\n\n'
         'EdgeBench integration requirement: Goal Plus candidate workspaces are '
         'isolated from the main task workspace. After every search_promote call, '
         'the outer/main Pi session must run sforge-goal-plus-submit --details. '
@@ -88,32 +102,74 @@ mkdir -p /home/agent/.goal-plus''',
         'needed."'
     )
     resume_cmd = (
+        'export GOAL_PLUS_OUTER_DEADLINE_AT="$SFORGE_AGENT_DEADLINE"; '
         'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
+        'HARD_REMAINING=$((SFORGE_AGENT_HARD_DEADLINE - $(date +%s))); '
         'SYNC_OUTPUT=$(sforge-goal-plus-submit --details --if-new 2>&1); '
         'SYNC_STATUS=$?; '
         'exec pi -p --mode json -c '
         '-e /opt/goal-plus/.pi/extensions/goal-plus.ts '
         '--provider openai-codex --model "$PI_MODEL" '
+        '--thinking "$SFORGE_PI_REASONING_EFFORT" '
         '"Continue working. Before this resume, the EdgeBench Goal Plus promotion '
         'bridge returned exit status ${SYNC_STATUS}:\n${SYNC_OUTPUT}\n\n'
         'Use the Goal Plus framework to continue deep search '
         'optimization for this task. The total exploration time budget is '
-        '${SFORGE_AGENT_TOTAL_BUDGET_SECONDS} seconds; the hard deadline is Unix '
-        'timestamp ${SFORGE_AGENT_DEADLINE}, and ${REMAINING} seconds remain now. '
+        '${SFORGE_AGENT_TOTAL_BUDGET_SECONDS} seconds; its cutoff is Unix timestamp '
+        '${SFORGE_AGENT_DEADLINE}, and ${REMAINING} exploration seconds remain. '
+        'The finalization-only hard deadline is ${SFORGE_AGENT_HARD_DEADLINE}, with '
+        '${HARD_REMAINING} seconds remaining. Once the exploration cutoff is reached, '
+        'do not create a new Search run or launch/continue a worker; only finish the '
+        'Judge, result recording, raw-goal audit, terminal status, and final report. '
         'If the initial SearchSpec has not been frozen yet, set '
-        'budget.max_parallel to 3, choose budget.max_candidates yourself from '
-        'the remaining task time and a depth-first search plan, and set '
-        'strategy.worker_budget to {"max_runtime_seconds": 1200, '
-        '"max_turns": 40, "on_exceed": "interrupt"}. Treat 1200 seconds as '
-        'the normal first-round worker budget, not a reinvestment cap. '
-        'Use the current remaining time to choose the next search work yourself; '
-        'no round count is prescribed. After every completed batch, inspect '
-        'research_summary and verifier trajectories, then selectively redispatch '
-        'valuable directions with a larger one-dispatch worker_budget. After every '
+        'strategy.worker_host to pi, budget.max_parallel to '
+        '__GOAL_PLUS_MAX_PARALLEL__, choose budget.max_candidates from '
+        'the remaining time, and set strategy.worker_budget to '
+        '{"max_runtime_seconds": __GOAL_PLUS_WORKER_RUNTIME_SECONDS__, '
+        '"on_exceed": "interrupt"} without a turn limit. After every '
         'search_promote, run '
         'sforge-goal-plus-submit --details from the outer/main session and require '
         'a successful Judge result before recording or completing the search."'
     )
+
+    def format_run_cmd(
+        self,
+        prompt_path: str,
+        *,
+        model: str | None = None,
+        cwd: str = "",
+        internet: bool = True,
+        resume: bool = False,
+    ) -> str:
+        cmd = super().format_run_cmd(
+            prompt_path,
+            model=model,
+            cwd=cwd,
+            internet=internet,
+            resume=resume,
+        )
+        max_parallel = positive_int_extra_env(
+            self._config.agent_extra_env,
+            GOAL_PLUS_MAX_PARALLEL_ENV,
+            DEFAULT_GOAL_PLUS_MAX_PARALLEL,
+        )
+        worker_runtime = positive_int_extra_env(
+            self._config.agent_extra_env,
+            GOAL_PLUS_WORKER_RUNTIME_ENV,
+            DEFAULT_GOAL_PLUS_WORKER_RUNTIME_SECONDS,
+        )
+        return cmd.replace(
+            "__GOAL_PLUS_MAX_PARALLEL__", str(max_parallel)
+        ).replace(
+            "__GOAL_PLUS_WORKER_RUNTIME_SECONDS__", str(worker_runtime)
+        )
+
+    def get_finalization_grace_seconds(self) -> int:
+        return nonnegative_int_extra_env(
+            self._config.agent_extra_env,
+            GOAL_PLUS_FINALIZATION_GRACE_ENV,
+            DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS,
+        )
 
     def prepare_container(
         self,
@@ -140,6 +196,7 @@ mkdir -p /home/agent/.goal-plus''',
         super().augment_env(env, model)
         env["GOAL_PLUS_SOURCE_PATH"] = GOAL_PLUS_CONTAINER_DIR
         env["GOAL_PLUS_ROOT"] = GOAL_PLUS_STATE_DIR
+        env["GOAL_PLUS_SEARCH_ROOT"] = GOAL_PLUS_STATE_DIR
         env["GOAL_PLUS_ROLE"] = "main"
         env["GOAL_PLUS_PI_ROLE"] = "main"
         if model:

@@ -61,10 +61,12 @@ chmod 600 ~/.pi/agent/models.json''',
     ]
     run_cmd = (
         'pi -p --mode json --provider openai-codex --model "$PI_MODEL" '
+        '--thinking "$SFORGE_PI_REASONING_EFFORT" '
         '"$(cat {prompt_file})"'
     )
     resume_cmd = (
         'pi -p --mode json -c --provider openai-codex --model "$PI_MODEL" '
+        '--thinking "$SFORGE_PI_REASONING_EFFORT" '
         '"Continue working."'
     )
     api_key_env = "OPENAI_API_KEY"
@@ -78,6 +80,7 @@ chmod 600 ~/.pi/agent/models.json''',
         env["PI_CODING_AGENT_SESSION_DIR"] = "/home/agent/.pi/agent/sessions"
         env["PI_SKIP_VERSION_CHECK"] = "1"
         env["PI_TELEMETRY"] = "0"
+        env.setdefault("SFORGE_PI_REASONING_EFFORT", "medium")
 
     def prepare_container(
         self,

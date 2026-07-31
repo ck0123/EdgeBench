@@ -5,12 +5,15 @@ import subprocess
 from pathlib import Path
 
 from sforge.harness.agent.codex_goal_plus import (
-    DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS,
     CodexGoalPlusAgent,
 )
 from sforge.harness.agent.codex_goal_plus_solo import CodexGoalPlusSoloAgent
 from sforge.harness.agent.factory import get_agent_class
-from sforge.harness.agent.goal_plus_runtime import prepare_goal_plus_container
+from sforge.harness.agent.goal_plus_runtime import (
+    DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS,
+    prepare_goal_plus_container,
+)
+from sforge.harness.agent.pi import PiAgent
 from sforge.harness.agent.pi_goal_plus import PiGoalPlusAgent
 from sforge.harness.backend.base import ExecResult
 from sforge.harness.config import SForgeConfig
@@ -22,6 +25,21 @@ def test_codex_goal_plus_is_registered() -> None:
 
 def test_codex_goal_plus_solo_is_registered() -> None:
     assert get_agent_class("codex-goal-plus-solo") is CodexGoalPlusSoloAgent
+
+
+def test_pi_goal_plus_is_registered() -> None:
+    assert get_agent_class("pi-goal-plus") is PiGoalPlusAgent
+
+
+def test_plain_pi_pins_reasoning_effort() -> None:
+    agent = PiAgent(SForgeConfig())
+    env: dict[str, str] = {}
+
+    command = agent.format_run_cmd("/tmp/prompt.md", model="gpt-5.6-sol")
+    agent.augment_env(env, "gpt-5.6-sol")
+
+    assert '--thinking "$SFORGE_PI_REASONING_EFFORT"' in command
+    assert env["SFORGE_PI_REASONING_EFFORT"] == "medium"
 
 
 def test_codex_goal_plus_installs_shared_runtime_and_codex_assets() -> None:
@@ -121,6 +139,33 @@ def test_codex_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> No
     assert "budget.max_parallel to 5" in resume_cmd
     assert '"max_runtime_seconds": 900' in resume_cmd
     assert agent.get_finalization_grace_seconds() == 180
+
+
+def test_pi_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> None:
+    config = SForgeConfig(
+        agent_extra_env={
+            "SFORGE_GOAL_PLUS_MAX_PARALLEL": "4",
+            "SFORGE_GOAL_PLUS_WORKER_RUNTIME_SECONDS": "720",
+            "SFORGE_GOAL_PLUS_FINALIZATION_GRACE_SECONDS": "150",
+        }
+    )
+    agent = PiGoalPlusAgent(config)
+
+    run_cmd = agent.format_run_cmd("/tmp/prompt.md", model="gpt-5.6-sol")
+    resume_cmd = agent.format_run_cmd(
+        "/tmp/prompt.md", model="gpt-5.6-sol", resume=True
+    )
+
+    assert "strategy.worker_host to pi" in run_cmd
+    assert '--thinking "$SFORGE_PI_REASONING_EFFORT"' in run_cmd
+    assert "budget.max_parallel to 4" in run_cmd
+    assert '"max_runtime_seconds": 720' in run_cmd
+    assert '"max_turns"' not in run_cmd
+    assert "budget.max_parallel to 4" in resume_cmd
+    assert '"max_runtime_seconds": 720' in resume_cmd
+    assert "SFORGE_AGENT_FINALIZATION_GRACE_SECONDS" in run_cmd
+    assert "SFORGE_AGENT_HARD_DEADLINE" in run_cmd
+    assert agent.get_finalization_grace_seconds() == 150
 
 
 def test_codex_goal_plus_allows_disabling_finalization_grace() -> None:

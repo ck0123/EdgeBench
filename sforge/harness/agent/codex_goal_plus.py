@@ -22,59 +22,21 @@ from pathlib import Path
 
 from sforge.harness.agent.codex import CodexAgent, _enable_codex_hooks
 from sforge.harness.agent.goal_plus_runtime import (
+    DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS,
+    DEFAULT_GOAL_PLUS_MAX_PARALLEL,
+    DEFAULT_GOAL_PLUS_WORKER_RUNTIME_SECONDS,
     GOAL_PLUS_CONTAINER_DIR,
+    GOAL_PLUS_FINALIZATION_GRACE_ENV,
+    GOAL_PLUS_MAX_PARALLEL_ENV,
     GOAL_PLUS_STATE_DIR,
+    GOAL_PLUS_WORKER_RUNTIME_ENV,
     collect_goal_plus_artifacts,
     goal_plus_runtime_install_cmds,
+    nonnegative_int_extra_env,
+    positive_int_extra_env,
     prepare_goal_plus_container,
 )
 from sforge.harness.backend import ContainerBackend, ContainerHandle
-
-
-GOAL_PLUS_MAX_PARALLEL_ENV = "SFORGE_GOAL_PLUS_MAX_PARALLEL"
-GOAL_PLUS_WORKER_RUNTIME_ENV = "SFORGE_GOAL_PLUS_WORKER_RUNTIME_SECONDS"
-GOAL_PLUS_FINALIZATION_GRACE_ENV = "SFORGE_GOAL_PLUS_FINALIZATION_GRACE_SECONDS"
-DEFAULT_GOAL_PLUS_MAX_PARALLEL = 3
-DEFAULT_GOAL_PLUS_WORKER_RUNTIME_SECONDS = 1200
-DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS = 300
-
-
-def _positive_int_extra_env(
-    values: dict[str, str],
-    name: str,
-    default: int,
-) -> int:
-    raw = values.get(name)
-    if raw is None:
-        return default
-    try:
-        parsed = int(raw)
-    except ValueError as exc:
-        raise ValueError(f"{name} must be a positive integer, got {raw!r}") from exc
-    if parsed < 1:
-        raise ValueError(f"{name} must be a positive integer, got {raw!r}")
-    return parsed
-
-
-def _nonnegative_int_extra_env(
-    values: dict[str, str],
-    name: str,
-    default: int,
-) -> int:
-    raw = values.get(name)
-    if raw is None:
-        return default
-    try:
-        parsed = int(raw)
-    except ValueError as exc:
-        raise ValueError(
-            f"{name} must be a non-negative integer, got {raw!r}"
-        ) from exc
-    if parsed < 0:
-        raise ValueError(
-            f"{name} must be a non-negative integer, got {raw!r}"
-        )
-    return parsed
 
 
 class CodexGoalPlusAgent(CodexAgent):
@@ -194,12 +156,12 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
             internet=internet,
             resume=resume,
         )
-        max_parallel = _positive_int_extra_env(
+        max_parallel = positive_int_extra_env(
             self._config.agent_extra_env,
             GOAL_PLUS_MAX_PARALLEL_ENV,
             DEFAULT_GOAL_PLUS_MAX_PARALLEL,
         )
-        worker_runtime = _positive_int_extra_env(
+        worker_runtime = positive_int_extra_env(
             self._config.agent_extra_env,
             GOAL_PLUS_WORKER_RUNTIME_ENV,
             DEFAULT_GOAL_PLUS_WORKER_RUNTIME_SECONDS,
@@ -220,7 +182,7 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         prepare_goal_plus_container(backend, handle, logger)
 
     def get_finalization_grace_seconds(self) -> int:
-        return _nonnegative_int_extra_env(
+        return nonnegative_int_extra_env(
             self._config.agent_extra_env,
             GOAL_PLUS_FINALIZATION_GRACE_ENV,
             DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS,

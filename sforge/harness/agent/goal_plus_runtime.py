@@ -31,6 +31,50 @@ GOAL_PLUS_REF = os.environ.get(
 GOAL_PLUS_CONTAINER_DIR = "/opt/goal-plus"
 GOAL_PLUS_STATE_DIR = "/home/agent/.goal-plus"
 PYTHON_CONTAINER_DIR = "/opt/sforge-python"
+GOAL_PLUS_MAX_PARALLEL_ENV = "SFORGE_GOAL_PLUS_MAX_PARALLEL"
+GOAL_PLUS_WORKER_RUNTIME_ENV = "SFORGE_GOAL_PLUS_WORKER_RUNTIME_SECONDS"
+GOAL_PLUS_FINALIZATION_GRACE_ENV = "SFORGE_GOAL_PLUS_FINALIZATION_GRACE_SECONDS"
+DEFAULT_GOAL_PLUS_MAX_PARALLEL = 3
+DEFAULT_GOAL_PLUS_WORKER_RUNTIME_SECONDS = 1200
+DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS = 300
+
+
+def positive_int_extra_env(
+    values: dict[str, str],
+    name: str,
+    default: int,
+) -> int:
+    raw = values.get(name)
+    if raw is None:
+        return default
+    try:
+        parsed = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer, got {raw!r}") from exc
+    if parsed < 1:
+        raise ValueError(f"{name} must be a positive integer, got {raw!r}")
+    return parsed
+
+
+def nonnegative_int_extra_env(
+    values: dict[str, str],
+    name: str,
+    default: int,
+) -> int:
+    raw = values.get(name)
+    if raw is None:
+        return default
+    try:
+        parsed = int(raw)
+    except ValueError as exc:
+        raise ValueError(
+            f"{name} must be a non-negative integer, got {raw!r}"
+        ) from exc
+    if parsed < 0:
+        raise ValueError(
+            f"{name} must be a non-negative integer, got {raw!r}"
+        )
+    return parsed
 
 
 def goal_plus_runtime_install_cmds() -> list[str]:

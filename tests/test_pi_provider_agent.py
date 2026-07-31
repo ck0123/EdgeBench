@@ -109,6 +109,13 @@ def test_goal_plus_provider_uses_selected_model_for_outer_and_workers(
     assert env["GOAL_PLUS_PI_MODEL"] == "glm-proxy/GLM-5.2"
 
 
+def test_goal_plus_provider_does_not_overwrite_copied_models_registry() -> None:
+    assert all(
+        "models.json" not in command
+        for command in PiGoalPlusProviderAgent.install_cmds
+    )
+
+
 def test_goal_plus_provider_prepares_provider_and_goal_plus(
     monkeypatch,
 ) -> None:

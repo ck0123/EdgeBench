@@ -26,6 +26,13 @@ class PiGoalPlusProviderAgent(PiGoalPlusAgent):
 
     name = "pi-goal-plus-provider"
     default_api_base_url = None
+    # The provider registry is copied by ``prepare_pi_provider_container``.
+    # Drop PiAgent's third install step, which writes the OAuth/sforge-proxy
+    # registry and would otherwise overwrite the selected provider config.
+    install_cmds = [
+        *PiGoalPlusAgent.install_cmds[:2],
+        *PiGoalPlusAgent.install_cmds[3:],
+    ]
     run_cmd = PiGoalPlusAgent.run_cmd.replace(
         "--provider openai-codex", '--provider "$PI_PROVIDER"'
     )

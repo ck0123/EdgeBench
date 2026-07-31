@@ -25,7 +25,10 @@ from sforge.harness.agent.codex_goal_plus import CodexGoalPlusAgent
 from sforge.harness.agent.codex_goal_plus_solo import CodexGoalPlusSoloAgent
 from sforge.harness.agent.pi import PiAgent
 from sforge.harness.agent.pi_goal_plus import PiGoalPlusAgent
-from sforge.harness.agent.pi_local_provider import PiLocalProviderAgent
+from sforge.harness.agent.pi_goal_plus_provider import (
+    PiGoalPlusProviderAgent,
+)
+from sforge.harness.agent.pi_provider import PiProviderAgent
 
 # ---------------------------------------------------------------------------
 # Registry: name → agent class
@@ -38,7 +41,8 @@ _REGISTRY: dict[str, type[Agent]] = {
     "codex-goal-plus-solo": CodexGoalPlusSoloAgent,
     "pi": PiAgent,
     "pi-goal-plus": PiGoalPlusAgent,
-    "pi-local-provider": PiLocalProviderAgent,
+    "pi-goal-plus-provider": PiGoalPlusProviderAgent,
+    "pi-provider": PiProviderAgent,
 }
 
 

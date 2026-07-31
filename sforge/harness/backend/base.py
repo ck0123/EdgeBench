@@ -24,6 +24,43 @@ from pathlib import Path, PurePosixPath
 from typing import Callable
 
 
+MAX_STREAM_CAPTURE_BYTES = 1024 * 1024
+
+
+class StreamingOutputCapture:
+    """Keep a full stream or a bounded tail while the canonical log stays on disk."""
+
+    def __init__(self, max_bytes: int | None = None) -> None:
+        if max_bytes is not None and max_bytes <= 0:
+            raise ValueError("max_bytes must be positive")
+        self._max_bytes = max_bytes
+        self._buffer = bytearray()
+        self._dropped_bytes = 0
+        self._lock = threading.Lock()
+
+    def append(self, chunk: bytes) -> None:
+        if not chunk:
+            return
+        with self._lock:
+            self._buffer.extend(chunk)
+            if self._max_bytes is not None and len(self._buffer) > self._max_bytes:
+                drop = len(self._buffer) - self._max_bytes
+                del self._buffer[:drop]
+                self._dropped_bytes += drop
+
+    def value(self) -> bytes:
+        with self._lock:
+            output = bytes(self._buffer)
+            dropped = self._dropped_bytes
+        if not dropped:
+            return output
+        marker = (
+            f"[sforge: {dropped} earlier output bytes omitted; "
+            "full stream retained in log file]\n"
+        ).encode()
+        return marker + output
+
+
 @dataclass
 class ExecResult:
     """Result of a simple (non-streaming) command execution."""

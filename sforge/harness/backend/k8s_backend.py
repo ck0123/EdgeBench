@@ -34,7 +34,9 @@ from sforge.harness.backend.base import (
     ContainerBackend,
     ContainerHandle,
     ExecResult,
+    MAX_STREAM_CAPTURE_BYTES,
     NetworkIsolationStrategy,
+    StreamingOutputCapture,
     StreamingExecResult,
 )
 
@@ -558,7 +560,9 @@ class K8sBackend(ContainerBackend):
         exit_marker = "__SFORGE_EXIT__"
         wrapped = f'({shell_cmd}); echo "{exit_marker}$?"'
 
-        chunks: list[bytes] = []
+        output_capture = StreamingOutputCapture(
+            MAX_STREAM_CAPTURE_BYTES if log_file else None
+        )
         proc_ref: list[subprocess.Popen] = []
         timed_out = False
         log_fh = None
@@ -584,7 +588,7 @@ class K8sBackend(ContainerBackend):
                         chunk = proc.stdout.read(4096)
                         if not chunk:
                             break
-                        chunks.append(chunk)
+                        output_capture.append(chunk)
                         if log_fh:
                             log_fh.write(chunk)
                             log_fh.flush()
@@ -633,7 +637,7 @@ class K8sBackend(ContainerBackend):
         else:
             exit_code = -1
 
-        output = b"".join(chunks).decode(errors="replace")
+        output = output_capture.value().decode(errors="replace")
         if exit_marker in output:
             idx = output.rfind(exit_marker)
             code_str = output[idx + len(exit_marker):].strip().split("\n")[0].strip()

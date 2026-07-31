@@ -44,6 +44,10 @@ import requests
 
 from sforge.harness.agent import Agent
 from sforge.harness.backend import ContainerBackend, ContainerHandle
+from sforge.harness.backend.base import (
+    MAX_STREAM_CAPTURE_BYTES,
+    StreamingOutputCapture,
+)
 from sforge.harness.config import SForgeConfig
 from sforge.harness.container_runtime import ensure_task_runtime
 from sforge.harness.constants import ADMIN_SECRET
@@ -668,7 +672,7 @@ def run_agent(
         total_runtime = 0.0
         agent_timed_out = False
         termination_reason = "completed"
-        all_output_parts: list[str] = []
+        output_capture = StreamingOutputCapture(MAX_STREAM_CAPTURE_BYTES)
         agent_live_log = log_dir / "agent_output.txt"
         MIN_RUNTIME_FOR_RESUME = 1
         MAX_RESUMES = 100
@@ -766,7 +770,7 @@ def run_agent(
                 log_append=is_resume,
                 on_chunk=on_chunk_cb,
             )
-            all_output_parts.append(seg_result.output)
+            output_capture.append(seg_result.output.encode(errors="replace"))
             total_runtime += seg_result.elapsed_seconds
             remaining_timeout -= seg_result.elapsed_seconds
             logger.info(
@@ -841,7 +845,7 @@ def run_agent(
             resume_count += 1
             logger.info(f"Agent exited after {seg_result.elapsed_seconds:.1f}s, will resume")
 
-        agent_output = "\n".join(all_output_parts)
+        agent_output = output_capture.value().decode(errors="replace")
         runtime = total_runtime
         budget_exhausted = runtime >= effective_timeout
         finalization_runtime_seconds = max(0.0, runtime - effective_timeout)

@@ -20,8 +20,40 @@ from sforge.harness.agent.pi import PiAgent
 from sforge.harness.backend.base import ContainerBackend, ContainerHandle
 
 
-BUILTIN_PROVIDER_API_KEYS = {
-    "zai": "ZAI_API_KEY",
+BUILTIN_PROVIDER_API_KEYS: dict[str, tuple[str, ...]] = {
+    "github-copilot": ("COPILOT_GITHUB_TOKEN",),
+    "anthropic": ("ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"),
+    "ant-ling": ("ANT_LING_API_KEY",),
+    "openai": ("OPENAI_API_KEY",),
+    "azure-openai-responses": ("AZURE_OPENAI_API_KEY",),
+    "nvidia": ("NVIDIA_API_KEY",),
+    "deepseek": ("DEEPSEEK_API_KEY",),
+    "google": ("GEMINI_API_KEY",),
+    "google-vertex": ("GOOGLE_CLOUD_API_KEY",),
+    "groq": ("GROQ_API_KEY",),
+    "cerebras": ("CEREBRAS_API_KEY",),
+    "xai": ("XAI_API_KEY",),
+    "openrouter": ("OPENROUTER_API_KEY",),
+    "vercel-ai-gateway": ("AI_GATEWAY_API_KEY",),
+    "zai": ("ZAI_API_KEY",),
+    "zai-coding-cn": ("ZAI_CODING_CN_API_KEY",),
+    "mistral": ("MISTRAL_API_KEY",),
+    "minimax": ("MINIMAX_API_KEY",),
+    "minimax-cn": ("MINIMAX_CN_API_KEY",),
+    "moonshotai": ("MOONSHOT_API_KEY",),
+    "moonshotai-cn": ("MOONSHOT_API_KEY",),
+    "huggingface": ("HF_TOKEN",),
+    "fireworks": ("FIREWORKS_API_KEY",),
+    "together": ("TOGETHER_API_KEY",),
+    "opencode": ("OPENCODE_API_KEY",),
+    "opencode-go": ("OPENCODE_API_KEY",),
+    "kimi-coding": ("KIMI_API_KEY",),
+    "cloudflare-workers-ai": ("CLOUDFLARE_API_KEY",),
+    "cloudflare-ai-gateway": ("CLOUDFLARE_API_KEY",),
+    "xiaomi": ("XIAOMI_API_KEY",),
+    "xiaomi-token-plan-cn": ("XIAOMI_TOKEN_PLAN_CN_API_KEY",),
+    "xiaomi-token-plan-ams": ("XIAOMI_TOKEN_PLAN_AMS_API_KEY",),
+    "xiaomi-token-plan-sgp": ("XIAOMI_TOKEN_PLAN_SGP_API_KEY",),
 }
 
 
@@ -65,17 +97,47 @@ def _read_provider_config(
     return models_source, provider_config
 
 
-def _api_key_env_name(provider_config: dict[str, object]) -> str | None:
+def _api_key_env_name(provider_config: dict[str, object]) -> str:
     value = provider_config.get("apiKey")
+    if value is None:
+        raise RuntimeError(
+            "Custom Pi providers require apiKey as $NAME or ${NAME}"
+        )
     if not isinstance(value, str):
-        return None
+        raise RuntimeError("Pi provider apiKey must be an environment reference")
     match = re.fullmatch(
-        r"(?:\$\{([A-Z][A-Z0-9_]*)\}|\$([A-Z][A-Z0-9_]*)|([A-Z][A-Z0-9_]*))",
+        r"(?:\$\{([A-Z][A-Z0-9_]*)\}|\$([A-Z][A-Z0-9_]*))",
         value,
     )
     if not match:
-        return None
+        raise RuntimeError(
+            "Pi provider apiKey must reference a host environment variable "
+            "as $NAME or ${NAME}; literal credentials are not allowed"
+        )
     return next(group for group in match.groups() if group is not None)
+
+
+def _selected_provider_config(
+    provider_config: dict[str, object],
+    model_id: str,
+) -> dict[str, object]:
+    selected = dict(provider_config)
+    selected["models"] = [
+        entry
+        for entry in provider_config.get("models", [])
+        if isinstance(entry, dict) and entry.get("id") == model_id
+    ]
+    return selected
+
+
+def _builtin_api_key(
+    provider: str,
+) -> tuple[str, str] | None:
+    for name in BUILTIN_PROVIDER_API_KEYS.get(provider, ()):
+        value = os.environ.get(name)
+        if value:
+            return name, value
+    return None
 
 
 def configure_pi_provider(
@@ -97,28 +159,31 @@ def configure_pi_provider(
     env["PI_PROVIDER"] = provider
     env["PI_MODEL"] = model_id
 
-    api_key_env = BUILTIN_PROVIDER_API_KEYS.get(provider)
-    if api_key_env:
-        api_key = os.environ.get(api_key_env)
-        if not api_key:
+    builtin_api_keys = BUILTIN_PROVIDER_API_KEYS.get(provider)
+    if builtin_api_keys:
+        credential = _builtin_api_key(provider)
+        if credential is None:
+            expected = " or ".join(builtin_api_keys)
             raise RuntimeError(
                 f"Pi provider {provider} requires host environment variable "
-                f"{api_key_env}"
+                f"{expected}"
             )
+        api_key_env, api_key = credential
         env[api_key_env] = api_key
         return provider, model_id
 
     models_source, provider_config = _read_provider_config(provider, model_id)
     setattr(agent, "_pi_models_source", models_source)
+    provider_config = _selected_provider_config(provider_config, model_id)
+    setattr(agent, "_pi_provider_config", provider_config)
     custom_api_key_env = _api_key_env_name(provider_config)
-    if custom_api_key_env:
-        api_key = os.environ.get(custom_api_key_env)
-        if not api_key:
-            raise RuntimeError(
-                f"Pi provider {provider} requires host environment variable "
-                f"{custom_api_key_env}"
-            )
-        env[custom_api_key_env] = api_key
+    api_key = os.environ.get(custom_api_key_env)
+    if not api_key:
+        raise RuntimeError(
+            f"Pi provider {provider} requires host environment variable "
+            f"{custom_api_key_env}"
+        )
+    env[custom_api_key_env] = api_key
     return provider, model_id
 
 
@@ -133,11 +198,25 @@ def prepare_pi_provider_container(
     if provider in BUILTIN_PROVIDER_API_KEYS:
         logger.info("Using Pi built-in provider %s for model %s", provider, model_id)
         return
-    models_source = getattr(agent, "_pi_models_source", None)
-    if not isinstance(models_source, Path):
-        models_source, _ = _read_provider_config(str(provider), str(model_id))
+    provider_config = getattr(agent, "_pi_provider_config", None)
+    if not isinstance(provider_config, dict):
+        _, provider_config = _read_provider_config(str(provider), str(model_id))
+        provider_config = _selected_provider_config(
+            provider_config,
+            str(model_id),
+        )
+        _api_key_env_name(provider_config)
     destination = PurePosixPath("/home/agent/.pi/agent/models.json")
-    backend.copy_to_container(handle, models_source, destination)
+    selected_registry = json.dumps(
+        {"providers": {str(provider): provider_config}},
+        indent=2,
+    )
+    backend.exec_run(
+        handle,
+        "mkdir -p /home/agent/.pi/agent",
+        user="root",
+    )
+    backend.write_to_container(handle, selected_registry, destination)
     backend.exec_run(
         handle,
         "chown -R agent:agent /home/agent/.pi && "
@@ -145,7 +224,7 @@ def prepare_pi_provider_container(
         user="root",
     )
     logger.info(
-        "Copied host Pi model registry into the work container for %s/%s",
+        "Installed selected Pi provider registry in the work container for %s/%s",
         provider,
         model_id,
     )

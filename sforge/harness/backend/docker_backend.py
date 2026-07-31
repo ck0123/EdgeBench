@@ -36,7 +36,9 @@ from sforge.harness.backend.base import (
     ContainerBackend,
     ContainerHandle,
     ExecResult,
+    MAX_STREAM_CAPTURE_BYTES,
     NetworkIsolationStrategy,
+    StreamingOutputCapture,
     StreamingExecResult,
 )
 
@@ -331,7 +333,9 @@ class DockerBackend(ContainerBackend):
         on_chunk: Callable[[bytes], None] | None = None,
     ) -> tuple[str, int, bool, float]:
         container = self._raw(handle)
-        chunks: list[bytes] = []
+        output_capture = StreamingOutputCapture(
+            MAX_STREAM_CAPTURE_BYTES if log_file else None
+        )
         exec_id = None
         exception = None
         timed_out = False
@@ -355,7 +359,7 @@ class DockerBackend(ContainerBackend):
                     exec_id = container.client.api.exec_create(container.id, cmd, **kwargs)["Id"]
                     exec_stream = container.client.api.exec_start(exec_id, stream=True)
                     for chunk in exec_stream:
-                        chunks.append(chunk)
+                        output_capture.append(chunk)
                         if log_fh:
                             log_fh.write(chunk)
                             log_fh.flush()
@@ -399,7 +403,7 @@ class DockerBackend(ContainerBackend):
             exit_code = container.client.api.exec_inspect(exec_id)["ExitCode"] if exec_id else -1
 
         end_time = time.time()
-        output = b"".join(chunks).decode(errors="replace")
+        output = output_capture.value().decode(errors="replace")
         return output, exit_code, timed_out, end_time - start_time
 
     # --- Inspection ---

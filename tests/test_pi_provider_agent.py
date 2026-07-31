@@ -35,6 +35,7 @@ def test_pi_provider_accepts_pi_supported_wire_apis(
                 "providers": {
                     "glm-proxy": {
                         "api": wire_api,
+                        "apiKey": "$GLM_PROXY_API_KEY",
                         "models": [{"id": "GLM-5.2"}],
                     }
                 }
@@ -42,6 +43,7 @@ def test_pi_provider_accepts_pi_supported_wire_apis(
         )
     )
     monkeypatch.setenv("SFORGE_PI_MODELS_FILE", str(models_file))
+    monkeypatch.setenv("GLM_PROXY_API_KEY", "test-key")
     agent = object.__new__(PiProviderAgent)
     env = {"PI_MODEL": "glm-proxy/GLM-5.2"}
 
@@ -60,13 +62,17 @@ def test_pi_provider_uses_platform_neutral_home_registry(
         json.dumps(
             {
                 "providers": {
-                    "glm-proxy": {"models": [{"id": "GLM-5.2"}]}
+                    "glm-proxy": {
+                        "apiKey": "$GLM_PROXY_API_KEY",
+                        "models": [{"id": "GLM-5.2"}],
+                    }
                 }
             }
         )
     )
     monkeypatch.delenv("SFORGE_PI_MODELS_FILE", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("GLM_PROXY_API_KEY", "test-key")
     agent = object.__new__(PiProviderAgent)
 
     agent.augment_env({}, "glm-proxy/GLM-5.2")
@@ -82,12 +88,16 @@ def test_goal_plus_provider_uses_selected_model_for_outer_and_workers(
         json.dumps(
             {
                 "providers": {
-                    "glm-proxy": {"models": [{"id": "GLM-5.2"}]}
+                    "glm-proxy": {
+                        "apiKey": "$GLM_PROXY_API_KEY",
+                        "models": [{"id": "GLM-5.2"}],
+                    }
                 }
             }
         )
     )
     monkeypatch.setenv("SFORGE_PI_MODELS_FILE", str(models_file))
+    monkeypatch.setenv("GLM_PROXY_API_KEY", "test-key")
     agent = PiGoalPlusProviderAgent(
         SForgeConfig(
             agent_extra_env={"SFORGE_GOAL_PLUS_PARALLEL_NUM": "2"}
@@ -154,6 +164,30 @@ def test_pi_provider_passes_zai_api_key(monkeypatch) -> None:
     assert env["ZAI_API_KEY"] == "test-zai-key"
 
 
+def test_pi_provider_passes_deepseek_api_key(monkeypatch) -> None:
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-deepseek-key")
+    agent = object.__new__(PiProviderAgent)
+    env = {}
+
+    agent.augment_env(env, "deepseek/deepseek-chat")
+
+    assert env["PI_PROVIDER"] == "deepseek"
+    assert env["PI_MODEL"] == "deepseek-chat"
+    assert env["DEEPSEEK_API_KEY"] == "test-deepseek-key"
+
+
+def test_pi_provider_prefers_anthropic_oauth_token(monkeypatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_OAUTH_TOKEN", "test-oauth-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-api-key")
+    agent = object.__new__(PiProviderAgent)
+    env = {}
+
+    agent.augment_env(env, "anthropic/claude-sonnet-4-20250514")
+
+    assert env["ANTHROPIC_OAUTH_TOKEN"] == "test-oauth-token"
+    assert "ANTHROPIC_API_KEY" not in env
+
+
 def test_pi_provider_requires_zai_api_key(monkeypatch) -> None:
     monkeypatch.delenv("ZAI_API_KEY", raising=False)
     agent = object.__new__(PiProviderAgent)
@@ -182,7 +216,9 @@ def test_pi_provider_uses_builtin_zai_without_models_file(
     )
 
 
-def test_pi_provider_copies_matching_models_file(tmp_path, monkeypatch) -> None:
+def test_pi_provider_installs_only_selected_provider_config(
+    tmp_path, monkeypatch
+) -> None:
     models_file = tmp_path / "models.json"
     models_file.write_text(
         json.dumps(
@@ -190,22 +226,35 @@ def test_pi_provider_copies_matching_models_file(tmp_path, monkeypatch) -> None:
                 "providers": {
                     "glm-proxy": {
                         "baseUrl": "http://example.invalid/v1",
-                        "apiKey": "redacted",
-                        "models": [{"id": "GLM-5.2"}],
-                    }
+                        "apiKey": "$GLM_PROXY_API_KEY",
+                        "models": [
+                            {"id": "GLM-5.2"},
+                            {
+                                "id": "other-model",
+                                "headers": {
+                                    "Authorization": "literal-selected-provider-secret"
+                                },
+                            },
+                        ],
+                    },
+                    "unselected": {
+                        "apiKey": "literal-secret-that-must-not-be-copied",
+                        "models": [{"id": "other-model"}],
+                    },
                 }
             }
         )
     )
     monkeypatch.setenv("SFORGE_PI_MODELS_FILE", str(models_file))
+    monkeypatch.setenv("GLM_PROXY_API_KEY", "test-key")
 
     class FakeBackend:
         def __init__(self) -> None:
-            self.copies = []
+            self.writes = []
             self.commands = []
 
-        def copy_to_container(self, handle, source, destination) -> None:
-            self.copies.append((source, str(destination)))
+        def write_to_container(self, handle, data, destination) -> None:
+            self.writes.append((data, str(destination)))
 
         def exec_run(self, handle, command, *, user=None) -> ExecResult:
             self.commands.append((command, user))
@@ -216,16 +265,26 @@ def test_pi_provider_copies_matching_models_file(tmp_path, monkeypatch) -> None:
     agent.augment_env({}, "glm-proxy/GLM-5.2")
     agent.prepare_container(backend, object(), logging.getLogger(__name__))
 
-    assert backend.copies == [
-        (models_file.resolve(), "/home/agent/.pi/agent/models.json")
+    assert len(backend.writes) == 1
+    written_registry = json.loads(backend.writes[0][0])
+    assert backend.writes[0][1] == "/home/agent/.pi/agent/models.json"
+    assert set(written_registry["providers"]) == {"glm-proxy"}
+    assert written_registry["providers"]["glm-proxy"]["apiKey"] == (
+        "$GLM_PROXY_API_KEY"
+    )
+    assert written_registry["providers"]["glm-proxy"]["models"] == [
+        {"id": "GLM-5.2"}
     ]
+    assert "literal-selected-provider-secret" not in backend.writes[0][0]
+    assert "literal-secret-that-must-not-be-copied" not in backend.writes[0][0]
+    assert "mkdir -p /home/agent/.pi/agent" in backend.commands[0][0]
     assert "chmod 600 /home/agent/.pi/agent/models.json" in backend.commands[-1][0]
     assert all("models.json" not in command for command in agent.install_cmds)
 
 
 @pytest.mark.parametrize(
     "api_key_reference",
-    ["GLM_PROXY_API_KEY", "$GLM_PROXY_API_KEY", "${GLM_PROXY_API_KEY}"],
+    ["$GLM_PROXY_API_KEY", "${GLM_PROXY_API_KEY}"],
 )
 def test_pi_provider_forwards_configured_api_key_env(
     tmp_path, monkeypatch, api_key_reference
@@ -251,3 +310,49 @@ def test_pi_provider_forwards_configured_api_key_env(
     agent.augment_env(env, "glm-proxy/GLM-5.2")
 
     assert env["GLM_PROXY_API_KEY"] == "test-key"
+
+
+@pytest.mark.parametrize("api_key", ["GLM_PROXY_API_KEY", "literal-secret"])
+def test_pi_provider_rejects_non_reference_api_key(
+    tmp_path, monkeypatch, api_key
+) -> None:
+    models_file = tmp_path / "models.json"
+    models_file.write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "glm-proxy": {
+                        "apiKey": api_key,
+                        "models": [{"id": "GLM-5.2"}],
+                    }
+                }
+            }
+        )
+    )
+    monkeypatch.setenv("SFORGE_PI_MODELS_FILE", str(models_file))
+    agent = object.__new__(PiProviderAgent)
+
+    with pytest.raises(RuntimeError, match=r"\$NAME"):
+        agent.augment_env({}, "glm-proxy/GLM-5.2")
+
+
+def test_pi_provider_requires_custom_api_key_reference(
+    tmp_path, monkeypatch
+) -> None:
+    models_file = tmp_path / "models.json"
+    models_file.write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "glm-proxy": {
+                        "models": [{"id": "GLM-5.2"}],
+                    }
+                }
+            }
+        )
+    )
+    monkeypatch.setenv("SFORGE_PI_MODELS_FILE", str(models_file))
+    agent = object.__new__(PiProviderAgent)
+
+    with pytest.raises(RuntimeError, match="Custom Pi providers require apiKey"):
+        agent.augment_env({}, "glm-proxy/GLM-5.2")

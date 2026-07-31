@@ -309,6 +309,31 @@ def _auto_eval_loop(
             logger.debug("Auto-eval tick failed: %s", e)
 
 
+def _agent_live_status_loop(
+    backend: ContainerBackend,
+    handle: ContainerHandle,
+    agent: Agent,
+    interval: float,
+    stop_event: threading.Event,
+    logger,
+    log_dir: Path,
+) -> None:
+    """Publish agent-owned state without coupling status to one CLI event format."""
+
+    last_error = None
+    while not stop_event.is_set():
+        try:
+            agent.collect_live_status(backend, handle, log_dir, logger)
+            last_error = None
+        except Exception as exc:
+            message = str(exc)
+            if message != last_error:
+                logger.warning("Agent live-status snapshot failed: %s", message)
+                last_error = message
+        if stop_event.wait(interval):
+            break
+
+
 # ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
@@ -373,6 +398,9 @@ def run_agent(
     net_isolation = None
     api_proxy = None
     install_parts: list[str] = []
+    auto_eval_stop = None
+    live_status_stop = None
+    live_status_thread = None
 
     try:
         # 0. Clean up stale iptables chains from previous runs that were killed
@@ -545,7 +573,6 @@ def run_agent(
         #    the stop hook — otherwise the agent exits naturally as soon as
         #    the model decides it's "done", losing the full timeout budget.
         effective_eval_interval = 0 if disable_auto_eval else eval_interval
-        auto_eval_stop = None
         if not task_spec.game_mode:
             _install_tools(
                 backend,
@@ -573,6 +600,28 @@ def run_agent(
                 logger.info(f"Host-side auto-eval started (interval={effective_eval_interval}s)")
         elif not disable_stop_hook:
             agent.install_stop_hook(backend, handle, log_dir, logger)
+
+        live_status_interval = float(agent.live_status_interval_seconds)
+        if live_status_interval > 0:
+            live_status_stop = threading.Event()
+            live_status_thread = threading.Thread(
+                target=_agent_live_status_loop,
+                args=(
+                    backend,
+                    handle,
+                    agent,
+                    live_status_interval,
+                    live_status_stop,
+                    logger,
+                    log_dir,
+                ),
+                daemon=True,
+            )
+            live_status_thread.start()
+            logger.info(
+                "Agent live-status snapshots started (interval=%.1fs)",
+                live_status_interval,
+            )
 
         # 4b. Apply network isolation (after install + tools, before agent)
         if not internet:
@@ -813,6 +862,16 @@ def run_agent(
             auto_eval_stop.set()
             logger.info("Auto-eval thread stopped")
 
+        if live_status_stop is not None:
+            live_status_stop.set()
+        if live_status_thread is not None:
+            live_status_thread.join(timeout=10)
+        try:
+            if live_status_interval > 0:
+                agent.collect_live_status(backend, handle, log_dir, logger)
+        except Exception as exc:
+            logger.warning("Final agent live-status snapshot failed: %s", exc)
+
         agent.collect_artifacts(backend, handle, log_dir, logger)
 
         # 8. Extract final archive (tar of submit_paths)
@@ -987,6 +1046,8 @@ def run_agent(
         # Stop auto-eval thread
         if auto_eval_stop is not None:
             auto_eval_stop.set()
+        if live_status_stop is not None:
+            live_status_stop.set()
 
         # Try to extract archive from the container before it's destroyed
         interrupted_archive = b""
@@ -1082,6 +1143,10 @@ def run_agent(
             resume_count=locals().get("resume_count", 0),
         )
     finally:
+        if live_status_stop is not None:
+            live_status_stop.set()
+        if live_status_thread is not None:
+            live_status_thread.join(timeout=10)
         if net_isolation is not None:
             try:
                 net_isolation.cleanup()

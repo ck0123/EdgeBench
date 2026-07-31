@@ -16,7 +16,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from pathlib import Path
 
@@ -30,7 +29,9 @@ from sforge.harness.agent.goal_plus_runtime import (
     GOAL_PLUS_MAX_PARALLEL_ENV,
     GOAL_PLUS_STATE_DIR,
     GOAL_PLUS_WORKER_RUNTIME_ENV,
+    collect_goal_plus_live_status,
     collect_goal_plus_artifacts,
+    goal_plus_should_resume_after_exit,
     goal_plus_runtime_install_cmds,
     nonnegative_int_extra_env,
     positive_int_extra_env,
@@ -45,6 +46,7 @@ class CodexGoalPlusAgent(CodexAgent):
     name = "codex-goal-plus"
     install_goal_plus_bridge = True
     stop_hook = "codex-native-goal-plus"
+    live_status_interval_seconds = 15.0
     install_cmds = [
         *CodexAgent.install_cmds,
         *goal_plus_runtime_install_cmds(),
@@ -194,54 +196,16 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         handle: ContainerHandle,
         logger: logging.Logger,
     ) -> bool:
-        probe = r'''
-import json
-from pathlib import Path
+        return goal_plus_should_resume_after_exit(backend, handle, logger)
 
-root = Path("/home/agent/.goal-plus")
-paths = sorted((root / "goal-plus").glob("*/goal.json"))
-records = []
-terminal = {"complete", "blocked", "abandoned"}
-for path in paths:
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        continue
-    status = str(payload.get("status") or "active")
-    reports_ready = True
-    for task in payload.get("search_tasks") or []:
-        if not isinstance(task, dict) or not task.get("result_recorded_at"):
-            continue
-        for key in ("report_path", "html_report_path"):
-            value = task.get(key)
-            if not isinstance(value, str) or not value or not Path(value).is_file():
-                reports_ready = False
-    records.append({"status": status, "reports_ready": reports_ready})
-ready = bool(records) and all(
-    record["status"] in terminal and record["reports_ready"]
-    for record in records
-)
-print(json.dumps({"records": records, "ready": ready}, sort_keys=True))
-'''
-        try:
-            result = backend.exec_run(handle, ["python", "-c", probe])
-            if result.exit_code != 0:
-                logger.warning(
-                    "Goal Plus terminal-state resume probe failed: %s",
-                    result.output.strip(),
-                )
-                return True
-            payload = json.loads(result.output.strip().splitlines()[-1])
-        except Exception as exc:
-            logger.warning("Goal Plus terminal-state resume probe failed: %s", exc)
-            return True
-        if payload.get("ready") is True:
-            logger.info(
-                "Goal Plus records are terminal and final reports exist; "
-                "native Codex auto-resume is not needed"
-            )
-            return False
-        return True
+    def collect_live_status(
+        self,
+        backend: ContainerBackend,
+        handle: ContainerHandle,
+        log_dir: Path,
+        logger: logging.Logger,
+    ) -> None:
+        collect_goal_plus_live_status(backend, handle, log_dir, logger)
 
     def install_stop_hook(
         self,

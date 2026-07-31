@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import shlex
@@ -37,6 +38,8 @@ GOAL_PLUS_FINALIZATION_GRACE_ENV = "SFORGE_GOAL_PLUS_FINALIZATION_GRACE_SECONDS"
 DEFAULT_GOAL_PLUS_MAX_PARALLEL = 3
 DEFAULT_GOAL_PLUS_WORKER_RUNTIME_SECONDS = 1200
 DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS = 300
+GOAL_PLUS_LIVE_STATUS_FILENAME = "goal-plus-live-status.json"
+GOAL_PLUS_STATUS_PROBE_CONTAINER_PATH = "/opt/sforge-goal-plus-status.py"
 
 
 def positive_int_extra_env(
@@ -160,6 +163,13 @@ def prepare_goal_plus_container(
 ) -> None:
     """Copy pinned Goal Plus source and an optional portable Python runtime."""
 
+    probe_source = Path(__file__).with_name("goal_plus_status_probe.py")
+    backend.copy_to_container(
+        handle,
+        probe_source,
+        PurePosixPath(GOAL_PLUS_STATUS_PROBE_CONTAINER_PATH),
+    )
+
     source = os.environ.get("SFORGE_GOAL_PLUS_SOURCE_DIR")
     if source:
         source_path = Path(source).expanduser().resolve()
@@ -191,6 +201,66 @@ def prepare_goal_plus_container(
         handle, python_path, PurePosixPath(PYTHON_CONTAINER_DIR)
     )
     logger.info("Copied portable Python from %s", python_path)
+
+
+def goal_plus_status_snapshot(
+    backend: ContainerBackend,
+    handle: ContainerHandle,
+) -> dict[str, object]:
+    """Read a compact, host-neutral snapshot from durable Goal Plus state."""
+
+    result = backend.exec_run(
+        handle,
+        ["python", GOAL_PLUS_STATUS_PROBE_CONTAINER_PATH],
+    )
+    if result.exit_code != 0:
+        raise RuntimeError(result.output.strip() or "Goal Plus status probe failed")
+    try:
+        payload = json.loads(result.output.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Goal Plus status probe returned invalid JSON") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("Goal Plus status probe returned a non-object")
+    return payload
+
+
+def collect_goal_plus_live_status(
+    backend: ContainerBackend,
+    handle: ContainerHandle,
+    log_dir: Path,
+    logger: logging.Logger,
+) -> None:
+    """Atomically publish compact Goal Plus state while the agent is running."""
+
+    payload = goal_plus_status_snapshot(backend, handle)
+    destination = log_dir / GOAL_PLUS_LIVE_STATUS_FILENAME
+    temporary = destination.with_suffix(destination.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+    temporary.replace(destination)
+
+
+def goal_plus_should_resume_after_exit(
+    backend: ContainerBackend,
+    handle: ContainerHandle,
+    logger: logging.Logger,
+) -> bool:
+    """Resume only while Goal Plus still has unfinished durable work."""
+
+    try:
+        payload = goal_plus_status_snapshot(backend, handle)
+    except Exception as exc:
+        logger.warning("Goal Plus terminal-state resume probe failed: %s", exc)
+        return True
+    if payload.get("terminal_ready") is True:
+        logger.info(
+            "Goal Plus records are terminal and final reports exist; "
+            "native auto-resume is not needed"
+        )
+        return False
+    return True
 
 
 def collect_goal_plus_artifacts(

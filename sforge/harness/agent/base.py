@@ -47,6 +47,7 @@ class Agent(abc.ABC):
     segment_timeout: int | None = None
     stop_hook: str | None = None
     resume_cmd: str | None = None
+    live_status_interval_seconds: float = 0.0
 
     def __init__(self, config: SForgeConfig) -> None:
         self._config = config
@@ -78,6 +79,15 @@ class Agent(abc.ABC):
         logger: logging.Logger,
     ) -> None:
         """Collect optional agent-owned state before the work container stops."""
+
+    def collect_live_status(
+        self,
+        backend: ContainerBackend,
+        handle: ContainerHandle,
+        log_dir: Path,
+        logger: logging.Logger,
+    ) -> None:
+        """Persist compact live state for host-side status commands."""
 
     def get_finalization_grace_seconds(self) -> int:
         """Return host time reserved after the agent's exploration cutoff."""

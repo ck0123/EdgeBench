@@ -28,7 +28,9 @@ from sforge.harness.agent.goal_plus_runtime import (
     GOAL_PLUS_MAX_PARALLEL_ENV,
     GOAL_PLUS_STATE_DIR,
     GOAL_PLUS_WORKER_RUNTIME_ENV,
+    collect_goal_plus_live_status,
     collect_goal_plus_artifacts,
+    goal_plus_should_resume_after_exit,
     goal_plus_runtime_install_cmds,
     nonnegative_int_extra_env,
     positive_int_extra_env,
@@ -46,6 +48,7 @@ class PiGoalPlusAgent(PiAgent):
     # Goal Plus registers its stop gate through Pi's native ``agent_end`` event
     # in the extension loaded by run_cmd/resume_cmd.
     stop_hook = "pi-native-goal-plus"
+    live_status_interval_seconds = 15.0
     install_cmds = [
         *PiAgent.install_cmds,
         *goal_plus_runtime_install_cmds(),
@@ -170,6 +173,23 @@ mkdir -p /home/agent/.goal-plus''',
             GOAL_PLUS_FINALIZATION_GRACE_ENV,
             DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS,
         )
+
+    def should_resume_after_exit(
+        self,
+        backend: ContainerBackend,
+        handle: ContainerHandle,
+        logger: logging.Logger,
+    ) -> bool:
+        return goal_plus_should_resume_after_exit(backend, handle, logger)
+
+    def collect_live_status(
+        self,
+        backend: ContainerBackend,
+        handle: ContainerHandle,
+        log_dir: Path,
+        logger: logging.Logger,
+    ) -> None:
+        collect_goal_plus_live_status(backend, handle, log_dir, logger)
 
     def prepare_container(
         self,

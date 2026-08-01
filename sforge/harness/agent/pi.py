@@ -25,12 +25,15 @@ from sforge.harness.agent.base import Agent
 from sforge.harness.backend import ContainerBackend, ContainerHandle
 
 
+DEFAULT_PI_PACKAGE_VERSION = "latest"
+
+
 class PiAgent(Agent):
 
     name = "pi"
     install_cmds = [
         "sudo -E bash -c 'NODE_MIRROR=${SFORGE_NODEJS_MIRROR_URL:-https://nodejs.org/dist} && curl -fsSL $NODE_MIRROR/v22.23.1/node-v22.23.1-linux-x64.tar.xz | tar -xJ -C /usr/local --strip-components=1'",
-        "sudo -E npm install -g @earendil-works/pi-coding-agent@0.80.6",
+        'sudo -E npm install -g "@earendil-works/pi-coding-agent@${SFORGE_PI_PACKAGE_VERSION:-latest}" && pi --version',
         r'''mkdir -p ~/.pi/agent
 cat > ~/.pi/agent/models.json << EOF
 {
@@ -80,6 +83,12 @@ chmod 600 ~/.pi/agent/models.json''',
         env["PI_CODING_AGENT_SESSION_DIR"] = "/home/agent/.pi/agent/sessions"
         env["PI_SKIP_VERSION_CHECK"] = "1"
         env["PI_TELEMETRY"] = "0"
+        env.setdefault(
+            "SFORGE_PI_PACKAGE_VERSION",
+            os.environ.get(
+                "SFORGE_PI_PACKAGE_VERSION", DEFAULT_PI_PACKAGE_VERSION
+            ),
+        )
         env.setdefault("SFORGE_PI_REASONING_EFFORT", "medium")
 
     def prepare_container(

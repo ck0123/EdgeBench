@@ -21,6 +21,14 @@ def test_pi_provider_agents_are_registered_without_local_alias() -> None:
         get_agent_class("pi-local-provider")
 
 
+def test_pi_provider_install_fails_fast_when_provider_is_not_visible() -> None:
+    for agent_class in (PiProviderAgent, PiGoalPlusProviderAgent):
+        commands = "\n".join(agent_class.install_cmds)
+        assert 'pi --list-models "$PI_PROVIDER"' in commands
+        assert 'grep -F -- "$PI_PROVIDER"' in commands
+        assert 'grep -F -- "$PI_MODEL"' in commands
+
+
 @pytest.mark.parametrize(
     "wire_api",
     ["anthropic-messages", "openai-completions", "openai-responses"],
@@ -277,8 +285,12 @@ def test_pi_provider_installs_only_selected_provider_config(
     ]
     assert "literal-selected-provider-secret" not in backend.writes[0][0]
     assert "literal-secret-that-must-not-be-copied" not in backend.writes[0][0]
-    assert "mkdir -p /home/agent/.pi/agent" in backend.commands[0][0]
-    assert "chmod 600 /home/agent/.pi/agent/models.json" in backend.commands[-1][0]
+    assert backend.commands[0][0] == ["mkdir", "-p", "/home/agent/.pi/agent"]
+    assert backend.commands[-1][0] == [
+        "chmod",
+        "600",
+        "/home/agent/.pi/agent/models.json",
+    ]
     assert all("models.json" not in command for command in agent.install_cmds)
 
 

@@ -243,7 +243,10 @@ class DockerBackend(ContainerBackend):
     ) -> None:
         container = self._raw(handle)
         command = f"cat <<'{HEREDOC_DELIMITER}' > {dst}\n{data}\n{HEREDOC_DELIMITER}"
-        container.exec_run(command)
+        result = container.exec_run(["/bin/sh", "-c", command])
+        if result.exit_code != 0:
+            output = result.output.decode(errors="replace")
+            raise RuntimeError(f"failed to write {dst}: {output}")
 
     # --- Exec ---
 

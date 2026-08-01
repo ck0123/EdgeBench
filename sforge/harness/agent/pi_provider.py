@@ -56,6 +56,12 @@ BUILTIN_PROVIDER_API_KEYS: dict[str, tuple[str, ...]] = {
     "xiaomi-token-plan-sgp": ("XIAOMI_TOKEN_PLAN_SGP_API_KEY",),
 }
 
+PI_PROVIDER_RUNTIME_GATE_CMD = r'''set -euo pipefail
+MODELS=$(pi --list-models "$PI_PROVIDER")
+printf '%s\n' "$MODELS"
+printf '%s\n' "$MODELS" | grep -F -- "$PI_PROVIDER" >/dev/null
+printf '%s\n' "$MODELS" | grep -F -- "$PI_MODEL" >/dev/null'''
+
 
 def _models_source() -> Path:
     return Path(
@@ -213,14 +219,23 @@ def prepare_pi_provider_container(
     )
     backend.exec_run(
         handle,
-        "mkdir -p /home/agent/.pi/agent",
+        ["mkdir", "-p", "/home/agent/.pi/agent"],
+        user="root",
+    )
+    backend.exec_run(
+        handle,
+        ["chown", "-R", "agent:agent", "/home/agent/.pi"],
         user="root",
     )
     backend.write_to_container(handle, selected_registry, destination)
     backend.exec_run(
         handle,
-        "chown -R agent:agent /home/agent/.pi && "
-        "chmod 600 /home/agent/.pi/agent/models.json",
+        ["chown", "-R", "agent:agent", "/home/agent/.pi"],
+        user="root",
+    )
+    backend.exec_run(
+        handle,
+        ["chmod", "600", "/home/agent/.pi/agent/models.json"],
         user="root",
     )
     logger.info(
@@ -234,7 +249,10 @@ class PiProviderAgent(PiAgent):
     """Run Pi with an explicit API provider/model pair from the host registry."""
 
     name = "pi-provider"
-    install_cmds = PiAgent.install_cmds[:2]
+    install_cmds = [
+        *PiAgent.install_cmds[:2],
+        PI_PROVIDER_RUNTIME_GATE_CMD,
+    ]
     run_cmd = (
         'pi -p --mode json --provider "$PI_PROVIDER" --model "$PI_MODEL" '
         '"$(cat {prompt_file})"'

@@ -49,7 +49,10 @@ def copy_to_container(container: Container, src: Path, dst: Path) -> None:
 def write_to_container(container: Container, data: str, dst: Path) -> None:
     """Write a string to a file inside a Docker container."""
     command = f"cat <<'{HEREDOC_DELIMITER}' > {dst}\n{data}\n{HEREDOC_DELIMITER}"
-    container.exec_run(command)
+    result = container.exec_run(["/bin/sh", "-c", command])
+    if result.exit_code != 0:
+        output = result.output.decode(errors="replace")
+        raise RuntimeError(f"failed to write {dst}: {output}")
 
 
 def exec_run_with_timeout(

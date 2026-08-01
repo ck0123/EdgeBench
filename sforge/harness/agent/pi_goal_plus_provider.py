@@ -15,6 +15,7 @@ import logging
 from sforge.harness.agent.goal_plus_runtime import prepare_goal_plus_container
 from sforge.harness.agent.pi_goal_plus import PiGoalPlusAgent
 from sforge.harness.agent.pi_provider import (
+    PI_PROVIDER_RUNTIME_GATE_CMD,
     configure_pi_provider,
     prepare_pi_provider_container,
 )
@@ -31,6 +32,7 @@ class PiGoalPlusProviderAgent(PiGoalPlusAgent):
     # registry and would otherwise overwrite the selected provider config.
     install_cmds = [
         *PiGoalPlusAgent.install_cmds[:2],
+        PI_PROVIDER_RUNTIME_GATE_CMD,
         *PiGoalPlusAgent.install_cmds[3:],
     ]
     run_cmd = PiGoalPlusAgent.run_cmd.replace(

@@ -16,7 +16,7 @@ from sforge.harness.agent.goal_plus_runtime import (
     prepare_goal_plus_container,
 )
 from sforge.harness.agent.goal_plus_status_probe import build_snapshot
-from sforge.harness.agent.pi import PiAgent
+from sforge.harness.agent.pi import DEFAULT_PI_PACKAGE_VERSION, PiAgent
 from sforge.harness.agent.pi_goal_plus import PiGoalPlusAgent
 from sforge.harness.backend.base import ExecResult
 from sforge.harness.config import SForgeConfig
@@ -43,6 +43,21 @@ def test_plain_pi_pins_reasoning_effort() -> None:
 
     assert '--thinking "$SFORGE_PI_REASONING_EFFORT"' in command
     assert env["SFORGE_PI_REASONING_EFFORT"] == "medium"
+
+
+def test_pi_tracks_latest_package_by_default_and_allows_exact_freeze() -> None:
+    install_command = PiAgent.install_cmds[1]
+    assert "SFORGE_PI_PACKAGE_VERSION:-latest" in install_command
+    assert "pi --version" in install_command
+    assert "@0.80.6" not in install_command
+
+    default_env: dict[str, str] = {}
+    PiAgent(SForgeConfig()).augment_env(default_env, "gpt-5.6-sol")
+    assert default_env["SFORGE_PI_PACKAGE_VERSION"] == DEFAULT_PI_PACKAGE_VERSION
+
+    frozen_env = {"SFORGE_PI_PACKAGE_VERSION": "0.83.0"}
+    PiAgent(SForgeConfig()).augment_env(frozen_env, "gpt-5.6-sol")
+    assert frozen_env["SFORGE_PI_PACKAGE_VERSION"] == "0.83.0"
 
 
 def test_codex_goal_plus_installs_shared_runtime_and_codex_assets() -> None:

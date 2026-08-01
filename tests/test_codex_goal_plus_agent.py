@@ -165,6 +165,9 @@ def test_pi_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> None:
         agent_extra_env={
             "SFORGE_GOAL_PLUS_PARALLEL_NUM": "4",
             "SFORGE_GOAL_PLUS_WORKER_RUNTIME_SECONDS": "720",
+            "SFORGE_GOAL_PLUS_WORKER_MIN_RUNTIME_SECONDS": "600",
+            "SFORGE_GOAL_PLUS_MIN_VERIFIER_RUNS": "1",
+            "SFORGE_GOAL_PLUS_CLOSEOUT_RESERVE_SECONDS": "90",
             "SFORGE_GOAL_PLUS_FINALIZATION_GRACE_SECONDS": "150",
         }
     )
@@ -179,9 +182,15 @@ def test_pi_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> None:
     assert '--thinking "$SFORGE_PI_REASONING_EFFORT"' in run_cmd
     assert "set budget.max_parallel to 4" in run_cmd
     assert '"max_runtime_seconds": 720' in run_cmd
+    assert '"min_runtime_seconds": 600' in run_cmd
+    assert '"min_verifier_runs": 1' in run_cmd
+    assert "reserve_closeout_seconds to 90" in run_cmd
     assert '"max_turns"' not in run_cmd
     assert "budget.max_parallel to 4" in resume_cmd
     assert '"max_runtime_seconds": 720' in resume_cmd
+    assert '"min_runtime_seconds": 600' in resume_cmd
+    assert '"min_verifier_runs": 1' in resume_cmd
+    assert "reserve_closeout_seconds to 90" in resume_cmd
     assert "SFORGE_AGENT_FINALIZATION_GRACE_SECONDS" in run_cmd
     assert "SFORGE_AGENT_HARD_DEADLINE" in run_cmd
     assert agent.get_finalization_grace_seconds() == 150

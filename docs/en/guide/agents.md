@@ -104,6 +104,14 @@ The complete Agent lifecycle is:
 
 During the process, the Agent can call `sforge-submit` at any time to submit code and receive feedback. The background auto-eval daemon also periodically submits evaluations.
 
+Pi's `--mode json` output repeats two cumulative assistant snapshots for every
+streamed delta. When SForge writes `agent_output.txt`, it removes only the
+duplicate `message` and `assistantMessageEvent.partial` fields from those
+`message_update` delta events, preserves every delta, and adds
+`sforge_compacted=true`. Message start/end, tool execution, and all other events
+remain unchanged, as do the process's raw stdout, live callbacks, and exit
+status.
+
 ## Stop Hook
 
 Stop Hook is an important SForge mechanism that prevents the Agent from exiting too early.

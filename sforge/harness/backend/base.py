@@ -21,7 +21,7 @@ import logging
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Callable
+from typing import Callable, Protocol
 
 
 MAX_STREAM_CAPTURE_BYTES = 1024 * 1024
@@ -59,6 +59,18 @@ class StreamingOutputCapture:
             "full stream retained in log file]\n"
         ).encode()
         return marker + output
+
+
+class StreamingLogFilter(Protocol):
+    """Transform streamed process output before it is persisted to a log."""
+
+    def feed(self, chunk: bytes) -> bytes:
+        """Return bytes ready to append for one process-output chunk."""
+        ...
+
+    def finish(self) -> bytes:
+        """Flush any buffered bytes after the process stream closes."""
+        ...
 
 
 @dataclass
@@ -199,6 +211,7 @@ class ContainerBackend(abc.ABC):
         shutdown_event: threading.Event | None = None,
         log_append: bool = False,
         on_chunk: Callable[[bytes], None] | None = None,
+        output_log_filter: StreamingLogFilter | None = None,
     ) -> StreamingExecResult:
         ...
 

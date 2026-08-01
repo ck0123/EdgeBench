@@ -40,6 +40,7 @@ from sforge.harness.backend.base import (
     NetworkIsolationStrategy,
     StreamingOutputCapture,
     StreamingExecResult,
+    StreamingLogFilter,
 )
 
 HEREDOC_DELIMITER = "EOF_SFORGE_1399519320"
@@ -288,13 +289,14 @@ class DockerBackend(ContainerBackend):
         shutdown_event: threading.Event | None = None,
         log_append: bool = False,
         on_chunk: Callable[[bytes], None] | None = None,
+        output_log_filter: StreamingLogFilter | None = None,
     ) -> StreamingExecResult:
         result = self._exec_run_impl(
             handle, cmd, timeout,
             log_file=log_file, user=user, workdir=workdir,
             environment=environment, stream_to_stdout=stream_to_stdout,
             shutdown_event=shutdown_event, log_append=log_append,
-            on_chunk=on_chunk,
+            on_chunk=on_chunk, output_log_filter=output_log_filter,
         )
         return StreamingExecResult(
             output=result[0], exit_code=result[1],
@@ -334,6 +336,7 @@ class DockerBackend(ContainerBackend):
         shutdown_event: threading.Event | None = None,
         log_append: bool = False,
         on_chunk: Callable[[bytes], None] | None = None,
+        output_log_filter: StreamingLogFilter | None = None,
     ) -> tuple[str, int, bool, float]:
         container = self._raw(handle)
         output_capture = StreamingOutputCapture(
@@ -364,8 +367,14 @@ class DockerBackend(ContainerBackend):
                     for chunk in exec_stream:
                         output_capture.append(chunk)
                         if log_fh:
-                            log_fh.write(chunk)
-                            log_fh.flush()
+                            log_chunk = (
+                                output_log_filter.feed(chunk)
+                                if output_log_filter is not None
+                                else chunk
+                            )
+                            if log_chunk:
+                                log_fh.write(log_chunk)
+                                log_fh.flush()
                         if stream_to_stdout:
                             sys.stdout.buffer.write(chunk)
                             sys.stdout.buffer.flush()
@@ -376,6 +385,16 @@ class DockerBackend(ContainerBackend):
                                 pass
                 except Exception as e:
                     exception = e
+                finally:
+                    if (
+                        log_fh
+                        and not log_fh.closed
+                        and output_log_filter is not None
+                    ):
+                        final_log_chunk = output_log_filter.finish()
+                        if final_log_chunk:
+                            log_fh.write(final_log_chunk)
+                            log_fh.flush()
 
             thread = threading.Thread(target=run_command)
             start_time = time.time()

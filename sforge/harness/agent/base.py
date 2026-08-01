@@ -21,6 +21,7 @@ import logging
 from pathlib import Path
 
 from sforge.harness.backend import ContainerBackend, ContainerHandle
+from sforge.harness.backend.base import StreamingLogFilter
 from sforge.harness.config import SForgeConfig
 
 
@@ -88,6 +89,11 @@ class Agent(abc.ABC):
         logger: logging.Logger,
     ) -> None:
         """Persist compact live state for host-side status commands."""
+
+    def create_output_log_filter(self) -> StreamingLogFilter | None:
+        """Return a fresh filter for one streamed agent-process segment."""
+
+        return None
 
     def get_finalization_grace_seconds(self) -> int:
         """Return host time reserved after the agent's exploration cutoff."""

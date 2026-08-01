@@ -113,6 +113,12 @@ Agent 的完整生命周期如下：
 
 整个过程中，Agent 可以随时调用 `sforge-submit` 提交代码获取反馈，后台的 auto-eval 守护进程也会定期自动提交评测。
 
+Pi 的 `--mode json` 会为每个流式 delta 同时输出两份累计 assistant 快照。SForge 写入
+`agent_output.txt` 时只对这些 `message_update` delta 去除重复的 `message` 和
+`assistantMessageEvent.partial` 字段，保留 delta 并标记
+`sforge_compacted=true`。`message_start`、`message_end`、工具执行和其他事件仍原样保存，
+因此完整对话和终态证据不变；进程的原始 stdout、实时回调与退出状态也不受影响。
+
 ## Stop Hook 机制
 
 Stop Hook 是 SForge 的一个重要机制，用于阻止 Agent 提前退出。

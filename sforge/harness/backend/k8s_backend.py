@@ -38,6 +38,7 @@ from sforge.harness.backend.base import (
     NetworkIsolationStrategy,
     StreamingOutputCapture,
     StreamingExecResult,
+    StreamingLogFilter,
 )
 
 
@@ -508,13 +509,14 @@ class K8sBackend(ContainerBackend):
         shutdown_event: threading.Event | None = None,
         log_append: bool = False,
         on_chunk: Callable[[bytes], None] | None = None,
+        output_log_filter: StreamingLogFilter | None = None,
     ) -> StreamingExecResult:
         output, exit_code, timed_out, elapsed = self._exec_streaming(
             handle, cmd, timeout,
             log_file=log_file, user=user, workdir=workdir,
             environment=environment, stream_to_stdout=stream_to_stdout,
             shutdown_event=shutdown_event, log_append=log_append,
-            on_chunk=on_chunk,
+            on_chunk=on_chunk, output_log_filter=output_log_filter,
         )
         return StreamingExecResult(
             output=output, exit_code=exit_code,
@@ -554,6 +556,7 @@ class K8sBackend(ContainerBackend):
         shutdown_event: threading.Event | None = None,
         log_append: bool = False,
         on_chunk: Callable[[bytes], None] | None = None,
+        output_log_filter: StreamingLogFilter | None = None,
     ) -> tuple[str, int, bool, float]:
         h = self._handle(handle)
         shell_cmd = self._build_shell_cmd(cmd, user=user, workdir=workdir, environment=environment)
@@ -590,8 +593,14 @@ class K8sBackend(ContainerBackend):
                             break
                         output_capture.append(chunk)
                         if log_fh:
-                            log_fh.write(chunk)
-                            log_fh.flush()
+                            log_chunk = (
+                                output_log_filter.feed(chunk)
+                                if output_log_filter is not None
+                                else chunk
+                            )
+                            if log_chunk:
+                                log_fh.write(log_chunk)
+                                log_fh.flush()
                         if stream_to_stdout:
                             sys.stdout.buffer.write(chunk)
                             sys.stdout.buffer.flush()
@@ -603,6 +612,16 @@ class K8sBackend(ContainerBackend):
                     proc.wait()
                 except Exception:
                     pass
+                finally:
+                    if (
+                        log_fh
+                        and not log_fh.closed
+                        and output_log_filter is not None
+                    ):
+                        final_log_chunk = output_log_filter.finish()
+                        if final_log_chunk:
+                            log_fh.write(final_log_chunk)
+                            log_fh.flush()
 
             thread = threading.Thread(target=run_command, daemon=True)
             start_time = time.time()

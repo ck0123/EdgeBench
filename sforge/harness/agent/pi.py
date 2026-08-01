@@ -28,6 +28,77 @@ from sforge.harness.backend import ContainerBackend, ContainerHandle
 DEFAULT_PI_PACKAGE_VERSION = "latest"
 
 
+class PiJsonOutputLogFilter:
+    """Remove duplicate cumulative snapshots from Pi JSON delta events.
+
+    Pi emits the complete partial assistant message twice for every streamed
+    delta: once as ``message`` and once as
+    ``assistantMessageEvent.partial``. The delta itself is sufficient to
+    preserve the stream, while the complete message remains available in the
+    corresponding start/end events.
+    """
+
+    def __init__(self) -> None:
+        self._buffer = bytearray()
+
+    @staticmethod
+    def _compact_line(line: bytes) -> bytes:
+        ending = b""
+        body = line
+        if body.endswith(b"\n"):
+            body = body[:-1]
+            ending = b"\n"
+            if body.endswith(b"\r"):
+                body = body[:-1]
+                ending = b"\r\n"
+        try:
+            event = json.loads(body)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            return line
+        if not isinstance(event, dict) or event.get("type") != "message_update":
+            return line
+        assistant_event = event.get("assistantMessageEvent")
+        if not isinstance(assistant_event, dict):
+            return line
+        event_type = assistant_event.get("type")
+        if not isinstance(event_type, str) or not event_type.endswith("_delta"):
+            return line
+        message = event.get("message")
+        partial = assistant_event.get("partial")
+        if not isinstance(message, dict) or message != partial:
+            return line
+
+        compacted = dict(event)
+        compacted.pop("message", None)
+        compacted_assistant_event = dict(assistant_event)
+        compacted_assistant_event.pop("partial", None)
+        compacted["assistantMessageEvent"] = compacted_assistant_event
+        compacted["sforge_compacted"] = True
+        return (
+            json.dumps(
+                compacted,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            + ending
+        )
+
+    def feed(self, chunk: bytes) -> bytes:
+        if not chunk:
+            return b""
+        self._buffer.extend(chunk)
+        lines = self._buffer.split(b"\n")
+        self._buffer = bytearray(lines.pop())
+        return b"".join(self._compact_line(line + b"\n") for line in lines)
+
+    def finish(self) -> bytes:
+        if not self._buffer:
+            return b""
+        line = bytes(self._buffer)
+        self._buffer.clear()
+        return self._compact_line(line)
+
+
 class PiAgent(Agent):
 
     name = "pi"
@@ -77,6 +148,9 @@ chmod 600 ~/.pi/agent/models.json''',
     # Pi's built-in openai-codex provider talks to the ChatGPT Codex backend.
     default_api_base_url = "https://chatgpt.com/backend-api"
     model_env = "PI_MODEL"
+
+    def create_output_log_filter(self) -> PiJsonOutputLogFilter:
+        return PiJsonOutputLogFilter()
 
     def augment_env(self, env: dict[str, str], model: str | None) -> None:
         env["PI_CODING_AGENT_DIR"] = "/home/agent/.pi/agent"

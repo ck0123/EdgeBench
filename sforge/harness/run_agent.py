@@ -769,6 +769,7 @@ def run_agent(
                 shutdown_event=shutdown_event,
                 log_append=is_resume,
                 on_chunk=on_chunk_cb,
+                output_log_filter=agent.create_output_log_filter(),
             )
             output_capture.append(seg_result.output.encode(errors="replace"))
             total_runtime += seg_result.elapsed_seconds

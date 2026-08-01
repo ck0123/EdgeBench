@@ -20,6 +20,7 @@ import json
 import logging
 from pathlib import Path
 
+from sforge.harness.agent.codex import CODEX_CLI_VERSION
 from sforge.harness.agent.goal_plus_runtime import (
     DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS,
     DEFAULT_GOAL_PLUS_CLOSEOUT_RESERVE_SECONDS,
@@ -58,6 +59,10 @@ class PiGoalPlusAgent(PiAgent):
     live_status_interval_seconds = 15.0
     install_cmds = [
         *PiAgent.install_cmds,
+        (
+            "command -v codex >/dev/null 2>&1 && codex --version || "
+            f"sudo -E npm install -g @openai/codex@{CODEX_CLI_VERSION}"
+        ),
         *goal_plus_runtime_install_cmds(),
         r'''mkdir -p ~/.pi/agent/prompts ~/.pi/agent/skills
 cp /opt/goal-plus/.pi/prompts/goal-plus.md ~/.pi/agent/prompts/goal-plus.md

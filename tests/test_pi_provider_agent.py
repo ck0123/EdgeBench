@@ -6,6 +6,7 @@ import logging
 import pytest
 
 from sforge.harness.agent.factory import get_agent_class
+from sforge.harness.agent.pi_goal_plus import PiGoalPlusAgent
 from sforge.harness.agent.pi_goal_plus_provider import (
     PiGoalPlusProviderAgent,
 )
@@ -27,6 +28,13 @@ def test_pi_provider_install_fails_fast_when_provider_is_not_visible() -> None:
         assert 'pi --list-models "$PI_PROVIDER"' in commands
         assert 'grep -F -- "$PI_PROVIDER"' in commands
         assert 'grep -F -- "$PI_MODEL"' in commands
+
+
+@pytest.mark.parametrize(
+    "agent_class", [PiGoalPlusAgent, PiGoalPlusProviderAgent]
+)
+def test_pi_goal_plus_installs_codex_for_evidence_annotation(agent_class) -> None:
+    assert "@openai/codex@" in "\n".join(agent_class.install_cmds)
 
 
 @pytest.mark.parametrize(

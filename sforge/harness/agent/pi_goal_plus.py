@@ -16,18 +16,26 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
+from sforge.harness.agent.codex import CODEX_CLI_VERSION
 from sforge.harness.agent.goal_plus_runtime import (
     DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS,
+    DEFAULT_GOAL_PLUS_CLOSEOUT_RESERVE_SECONDS,
+    DEFAULT_GOAL_PLUS_MIN_VERIFIER_RUNS,
     DEFAULT_GOAL_PLUS_PARALLEL_NUM,
+    DEFAULT_GOAL_PLUS_WORKER_MIN_RUNTIME_SECONDS,
     DEFAULT_GOAL_PLUS_WORKER_RUNTIME_SECONDS,
+    GOAL_PLUS_CLOSEOUT_RESERVE_ENV,
     GOAL_PLUS_CONTAINER_DIR,
     GOAL_PLUS_FINALIZATION_GRACE_ENV,
     GOAL_PLUS_PARALLEL_NUM_ENV,
+    GOAL_PLUS_MIN_VERIFIER_RUNS_ENV,
     GOAL_PLUS_STATE_DIR,
     GOAL_PLUS_WORKER_RUNTIME_ENV,
+    GOAL_PLUS_WORKER_MIN_RUNTIME_ENV,
     collect_goal_plus_live_status,
     collect_goal_plus_artifacts,
     goal_plus_should_resume_after_exit,
@@ -51,6 +59,10 @@ class PiGoalPlusAgent(PiAgent):
     live_status_interval_seconds = 15.0
     install_cmds = [
         *PiAgent.install_cmds,
+        (
+            "command -v codex >/dev/null 2>&1 && codex --version || "
+            f"sudo -E npm install -g @openai/codex@{CODEX_CLI_VERSION}"
+        ),
         *goal_plus_runtime_install_cmds(),
         r'''mkdir -p ~/.pi/agent/prompts ~/.pi/agent/skills
 cp /opt/goal-plus/.pi/prompts/goal-plus.md ~/.pi/agent/prompts/goal-plus.md
@@ -72,10 +84,10 @@ mkdir -p /home/agent/.goal-plus''',
         'For the initial frozen SearchSpec, set strategy.worker_host to pi and '
         'set budget.max_parallel to __GOAL_PLUS_PARALLEL_NUM__ and omit the '
         'deprecated budget.max_candidates field. max_parallel is the single '
-        'EdgeBench K value. Set '
-        'strategy.worker_budget to '
-        '{{"max_runtime_seconds": __GOAL_PLUS_WORKER_RUNTIME_SECONDS__, '
-        '"on_exceed": "interrupt"}}; do not prescribe a turn limit. This is the '
+        'EdgeBench K value. Set strategy.worker_budget to '
+        '__GOAL_PLUS_WORKER_BUDGET__, and '
+        'strategy.config.reserve_closeout_seconds to '
+        '__GOAL_PLUS_CLOSEOUT_RESERVE_SECONDS__; do not prescribe a turn limit. This is the '
         'normal first-dispatch budget for each candidate worker, not a cap on '
         'justified reinvestment.\n'
         'The total exploration time budget for this task is '
@@ -127,9 +139,10 @@ mkdir -p /home/agent/.goal-plus''',
         'If the initial SearchSpec has not been frozen yet, set '
         'strategy.worker_host to pi and budget.max_parallel to '
         '__GOAL_PLUS_PARALLEL_NUM__; omit deprecated budget.max_candidates. '
-        'max_parallel is the single EdgeBench K value. Set strategy.worker_budget to '
-        '{"max_runtime_seconds": __GOAL_PLUS_WORKER_RUNTIME_SECONDS__, '
-        '"on_exceed": "interrupt"} without a turn limit. After every '
+        'max_parallel is the single EdgeBench K value. Set strategy.worker_budget '
+        'to __GOAL_PLUS_WORKER_BUDGET__, and '
+        'strategy.config.reserve_closeout_seconds to '
+        '__GOAL_PLUS_CLOSEOUT_RESERVE_SECONDS__ without a turn limit. After every '
         'search_promote, run '
         'sforge-goal-plus-submit --details from the outer/main session and require '
         'a successful Judge result before recording or completing the search."'
@@ -161,10 +174,41 @@ mkdir -p /home/agent/.goal-plus''',
             GOAL_PLUS_WORKER_RUNTIME_ENV,
             DEFAULT_GOAL_PLUS_WORKER_RUNTIME_SECONDS,
         )
+        worker_min_runtime = nonnegative_int_extra_env(
+            self._config.agent_extra_env,
+            GOAL_PLUS_WORKER_MIN_RUNTIME_ENV,
+            DEFAULT_GOAL_PLUS_WORKER_MIN_RUNTIME_SECONDS,
+        )
+        min_verifier_runs = nonnegative_int_extra_env(
+            self._config.agent_extra_env,
+            GOAL_PLUS_MIN_VERIFIER_RUNS_ENV,
+            DEFAULT_GOAL_PLUS_MIN_VERIFIER_RUNS,
+        )
+        closeout_reserve = nonnegative_int_extra_env(
+            self._config.agent_extra_env,
+            GOAL_PLUS_CLOSEOUT_RESERVE_ENV,
+            DEFAULT_GOAL_PLUS_CLOSEOUT_RESERVE_SECONDS,
+        )
+        if worker_min_runtime >= worker_runtime and worker_min_runtime:
+            raise ValueError(
+                f"{GOAL_PLUS_WORKER_MIN_RUNTIME_ENV} must be less than "
+                f"{GOAL_PLUS_WORKER_RUNTIME_ENV}"
+            )
+        worker_budget = {
+            "max_runtime_seconds": worker_runtime,
+            "on_exceed": "interrupt",
+        }
+        if worker_min_runtime:
+            worker_budget["min_runtime_seconds"] = worker_min_runtime
+        if min_verifier_runs:
+            worker_budget["min_verifier_runs"] = min_verifier_runs
+        worker_budget_text = json.dumps(worker_budget)
         return cmd.replace(
             "__GOAL_PLUS_PARALLEL_NUM__", str(parallel_num)
         ).replace(
-            "__GOAL_PLUS_WORKER_RUNTIME_SECONDS__", str(worker_runtime)
+            "__GOAL_PLUS_WORKER_BUDGET__", worker_budget_text
+        ).replace(
+            "__GOAL_PLUS_CLOSEOUT_RESERVE_SECONDS__", str(closeout_reserve)
         )
 
     def get_finalization_grace_seconds(self) -> int:

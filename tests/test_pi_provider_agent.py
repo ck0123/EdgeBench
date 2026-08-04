@@ -34,8 +34,8 @@ def test_pi_provider_install_fails_fast_when_provider_is_not_visible() -> None:
 @pytest.mark.parametrize(
     "agent_class", [PiGoalPlusAgent, PiGoalPlusProviderAgent]
 )
-def test_pi_goal_plus_installs_codex_for_evidence_annotation(agent_class) -> None:
-    assert "@openai/codex@" in "\n".join(agent_class.install_cmds)
+def test_pi_goal_plus_does_not_install_unused_codex_cli(agent_class) -> None:
+    assert "@openai/codex@" not in "\n".join(agent_class.install_cmds)
 
 
 @pytest.mark.parametrize(

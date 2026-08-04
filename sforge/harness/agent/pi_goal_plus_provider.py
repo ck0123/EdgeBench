@@ -45,7 +45,9 @@ class PiGoalPlusProviderAgent(PiGoalPlusAgent):
     def augment_env(self, env: dict[str, str], model: str | None) -> None:
         super().augment_env(env, model)
         provider, model_id = configure_pi_provider(self, env, model)
-        env["GOAL_PLUS_PI_MODEL"] = f"{provider}/{model_id}"
+        env["GOAL_PLUS_PI_MODEL"] = env.get(
+            "SFORGE_GOAL_PLUS_WORKER_MODEL", f"{provider}/{model_id}"
+        )
 
     def prepare_container(
         self,

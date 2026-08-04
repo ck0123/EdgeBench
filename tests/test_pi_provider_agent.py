@@ -28,6 +28,7 @@ def test_pi_provider_install_fails_fast_when_provider_is_not_visible() -> None:
         assert 'pi --list-models "$PI_PROVIDER"' in commands
         assert 'grep -F -- "$PI_PROVIDER"' in commands
         assert 'grep -F -- "$PI_MODEL"' in commands
+        assert "SFORGE_PI_AUX_MODELS" in commands
 
 
 @pytest.mark.parametrize(
@@ -133,6 +134,59 @@ def test_goal_plus_provider_uses_selected_model_for_outer_and_workers(
     assert env["PI_PROVIDER"] == "glm-proxy"
     assert env["PI_MODEL"] == "GLM-5.2"
     assert env["GOAL_PLUS_PI_MODEL"] == "glm-proxy/GLM-5.2"
+
+
+def test_goal_plus_provider_uses_independent_worker_and_annotation_models(
+    tmp_path, monkeypatch
+) -> None:
+    models_file = tmp_path / "models.json"
+    models_file.write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "bench-openai": {
+                        "apiKey": "$OPENAI_API_KEY",
+                        "models": [
+                            {"id": "gpt-5.6-terra"},
+                            {"id": "gpt-5.6-luna"},
+                        ],
+                    },
+                }
+            }
+        )
+    )
+    monkeypatch.setenv("SFORGE_PI_MODELS_FILE", str(models_file))
+    monkeypatch.setenv("OPENAI_API_KEY", "terra-key")
+    agent = PiGoalPlusProviderAgent(
+        SForgeConfig(
+            agent_extra_env={
+                "SFORGE_GOAL_PLUS_PARALLEL_NUM": "4",
+                "SFORGE_GOAL_PLUS_WORKER_MODEL": "bench-openai/gpt-5.6-luna",
+                "SFORGE_GOAL_PLUS_WORKER_REASONING_EFFORT": "high",
+                "GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL": (
+                    "bench-openai/gpt-5.6-terra"
+                ),
+                "GOAL_PLUS_EVIDENCE_ANNOTATOR_REASONING_EFFORT": "high",
+                "SFORGE_GOAL_PLUS_EVIDENCE_ANNOTATOR_TIMEOUT_SECONDS": "1800",
+                "SFORGE_PI_AUX_MODELS": "bench-openai/gpt-5.6-luna",
+            }
+        )
+    )
+    env = dict(agent._config.agent_extra_env)
+
+    command = agent.format_run_cmd(
+        "/tmp/prompt.md", model="bench-openai/gpt-5.6-terra"
+    )
+    agent.augment_env(env, "bench-openai/gpt-5.6-terra")
+
+    assert env["PI_PROVIDER"] == "bench-openai"
+    assert env["PI_MODEL"] == "gpt-5.6-terra"
+    assert env["GOAL_PLUS_PI_MODEL"] == "bench-openai/gpt-5.6-luna"
+    assert env["OPENAI_API_KEY"] == "terra-key"
+    assert "strategy.models" in command
+    assert "SFORGE_GOAL_PLUS_WORKER_MODEL" in command
+    assert "strategy.evidence_annotator" in command
+    assert "GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL" in command
 
 
 def test_goal_plus_provider_does_not_overwrite_copied_models_registry() -> None:
@@ -300,6 +354,55 @@ def test_pi_provider_installs_only_selected_provider_config(
         "/home/agent/.pi/agent/models.json",
     ]
     assert all("models.json" not in command for command in agent.install_cmds)
+
+
+def test_pi_provider_installs_selected_and_auxiliary_provider_models(
+    tmp_path, monkeypatch
+) -> None:
+    models_file = tmp_path / "models.json"
+    models_file.write_text(
+        json.dumps(
+            {
+                "providers": {
+                    "bench-openai": {
+                        "apiKey": "$OPENAI_API_KEY",
+                        "models": [
+                            {"id": "gpt-5.6-terra"},
+                            {"id": "gpt-5.6-luna"},
+                            {"id": "unused-terra"},
+                        ],
+                    },
+                }
+            }
+        )
+    )
+    monkeypatch.setenv("SFORGE_PI_MODELS_FILE", str(models_file))
+    monkeypatch.setenv("OPENAI_API_KEY", "terra-key")
+
+    class FakeBackend:
+        def __init__(self) -> None:
+            self.writes = []
+
+        def write_to_container(self, handle, data, destination) -> None:
+            self.writes.append((data, str(destination)))
+
+        def exec_run(self, handle, command, *, user=None) -> ExecResult:
+            return ExecResult()
+
+    backend = FakeBackend()
+    agent = object.__new__(PiProviderAgent)
+    agent.augment_env(
+        {"SFORGE_PI_AUX_MODELS": "bench-openai/gpt-5.6-luna"},
+        "bench-openai/gpt-5.6-terra",
+    )
+    agent.prepare_container(backend, object(), logging.getLogger(__name__))
+
+    registry = json.loads(backend.writes[0][0])
+    assert set(registry["providers"]) == {"bench-openai"}
+    assert registry["providers"]["bench-openai"]["models"] == [
+        {"id": "gpt-5.6-terra"},
+        {"id": "gpt-5.6-luna"},
+    ]
 
 
 @pytest.mark.parametrize(

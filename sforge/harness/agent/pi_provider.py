@@ -60,7 +60,16 @@ PI_PROVIDER_RUNTIME_GATE_CMD = r'''set -euo pipefail
 MODELS=$(pi --list-models "$PI_PROVIDER")
 printf '%s\n' "$MODELS"
 printf '%s\n' "$MODELS" | grep -F -- "$PI_PROVIDER" >/dev/null
-printf '%s\n' "$MODELS" | grep -F -- "$PI_MODEL" >/dev/null'''
+printf '%s\n' "$MODELS" | grep -F -- "$PI_MODEL" >/dev/null
+for REF in ${SFORGE_PI_AUX_MODELS:-}; do
+    PROVIDER=${REF%%/*}
+    MODEL=${REF#*/}
+    test -n "$PROVIDER" && test -n "$MODEL" && test "$PROVIDER" != "$MODEL"
+    AUX_MODELS=$(pi --list-models "$PROVIDER")
+    printf '%s\n' "$AUX_MODELS"
+    printf '%s\n' "$AUX_MODELS" | grep -F -- "$PROVIDER" >/dev/null
+    printf '%s\n' "$AUX_MODELS" | grep -F -- "$MODEL" >/dev/null
+done'''
 
 
 def _models_source() -> Path:
@@ -136,6 +145,30 @@ def _selected_provider_config(
     return selected
 
 
+def _merge_provider_config(
+    selected: dict[str, object] | None,
+    addition: dict[str, object],
+) -> dict[str, object]:
+    if selected is None:
+        return addition
+    models = list(selected.get("models", []))
+    model_ids = {
+        item.get("id") for item in models if isinstance(item, dict)
+    }
+    models.extend(
+        item
+        for item in addition.get("models", [])
+        if isinstance(item, dict) and item.get("id") not in model_ids
+    )
+    selected["models"] = models
+    return selected
+
+
+def _model_refs(env: dict[str, str], main_ref: str) -> list[str]:
+    refs = [main_ref, *env.get("SFORGE_PI_AUX_MODELS", "").split()]
+    return list(dict.fromkeys(ref for ref in refs if ref))
+
+
 def _builtin_api_key(
     provider: str,
 ) -> tuple[str, str] | None:
@@ -165,31 +198,46 @@ def configure_pi_provider(
     env["PI_PROVIDER"] = provider
     env["PI_MODEL"] = model_id
 
-    builtin_api_keys = BUILTIN_PROVIDER_API_KEYS.get(provider)
-    if builtin_api_keys:
-        credential = _builtin_api_key(provider)
-        if credential is None:
-            expected = " or ".join(builtin_api_keys)
+    provider_configs: dict[str, dict[str, object]] = {}
+    for selected_ref in _model_refs(env, model_ref):
+        selected_provider, separator, selected_model = selected_ref.partition("/")
+        if not separator or not selected_provider or not selected_model:
             raise RuntimeError(
-                f"Pi provider {provider} requires host environment variable "
-                f"{expected}"
+                "Pi auxiliary models must use PROVIDER/MODEL references"
             )
-        api_key_env, api_key = credential
-        env[api_key_env] = api_key
-        return provider, model_id
+        builtin_api_keys = BUILTIN_PROVIDER_API_KEYS.get(selected_provider)
+        if builtin_api_keys:
+            credential = _builtin_api_key(selected_provider)
+            if credential is None:
+                expected = " or ".join(builtin_api_keys)
+                raise RuntimeError(
+                    f"Pi provider {selected_provider} requires host environment "
+                    f"variable {expected}"
+                )
+            api_key_env, api_key = credential
+            env[api_key_env] = api_key
+            continue
 
-    models_source, provider_config = _read_provider_config(provider, model_id)
-    setattr(agent, "_pi_models_source", models_source)
-    provider_config = _selected_provider_config(provider_config, model_id)
-    setattr(agent, "_pi_provider_config", provider_config)
-    custom_api_key_env = _api_key_env_name(provider_config)
-    api_key = os.environ.get(custom_api_key_env)
-    if not api_key:
-        raise RuntimeError(
-            f"Pi provider {provider} requires host environment variable "
-            f"{custom_api_key_env}"
+        models_source, provider_config = _read_provider_config(
+            selected_provider, selected_model
         )
-    env[custom_api_key_env] = api_key
+        setattr(agent, "_pi_models_source", models_source)
+        provider_config = _selected_provider_config(
+            provider_config, selected_model
+        )
+        custom_api_key_env = _api_key_env_name(provider_config)
+        api_key = os.environ.get(custom_api_key_env)
+        if not api_key:
+            raise RuntimeError(
+                f"Pi provider {selected_provider} requires host environment "
+                f"variable {custom_api_key_env}"
+            )
+        env[custom_api_key_env] = api_key
+        provider_configs[selected_provider] = _merge_provider_config(
+            provider_configs.get(selected_provider), provider_config
+        )
+    setattr(agent, "_pi_provider_configs", provider_configs)
+    setattr(agent, "_pi_provider_config", provider_configs.get(provider))
     return provider, model_id
 
 
@@ -201,20 +249,28 @@ def prepare_pi_provider_container(
 ) -> None:
     provider = getattr(agent, "_pi_provider", None)
     model_id = getattr(agent, "_pi_model_id", None)
-    if provider in BUILTIN_PROVIDER_API_KEYS:
+    provider_configs = getattr(agent, "_pi_provider_configs", None)
+    if provider_configs is None and provider in BUILTIN_PROVIDER_API_KEYS:
         logger.info("Using Pi built-in provider %s for model %s", provider, model_id)
         return
-    provider_config = getattr(agent, "_pi_provider_config", None)
-    if not isinstance(provider_config, dict):
-        _, provider_config = _read_provider_config(str(provider), str(model_id))
-        provider_config = _selected_provider_config(
-            provider_config,
-            str(model_id),
-        )
+    if provider_configs is None:
+        provider_config = getattr(agent, "_pi_provider_config", None)
+        if not isinstance(provider_config, dict):
+            _, provider_config = _read_provider_config(str(provider), str(model_id))
+            provider_config = _selected_provider_config(
+                provider_config,
+                str(model_id),
+            )
+            _api_key_env_name(provider_config)
+        provider_configs = {str(provider): provider_config}
+    if not provider_configs:
+        logger.info("Using only Pi built-in providers for this run")
+        return
+    for provider_config in provider_configs.values():
         _api_key_env_name(provider_config)
     destination = PurePosixPath("/home/agent/.pi/agent/models.json")
     selected_registry = json.dumps(
-        {"providers": {str(provider): provider_config}},
+        {"providers": provider_configs},
         indent=2,
     )
     backend.exec_run(
@@ -239,9 +295,8 @@ def prepare_pi_provider_container(
         user="root",
     )
     logger.info(
-        "Installed selected Pi provider registry in the work container for %s/%s",
-        provider,
-        model_id,
+        "Installed selected Pi provider registry in the work container for %s",
+        ", ".join(sorted(provider_configs)),
     )
 
 

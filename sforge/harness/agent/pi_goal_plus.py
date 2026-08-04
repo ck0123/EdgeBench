@@ -20,7 +20,6 @@ import json
 import logging
 from pathlib import Path
 
-from sforge.harness.agent.codex import CODEX_CLI_VERSION
 from sforge.harness.agent.goal_plus_runtime import (
     DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS,
     DEFAULT_GOAL_PLUS_CLOSEOUT_RESERVE_SECONDS,
@@ -59,10 +58,6 @@ class PiGoalPlusAgent(PiAgent):
     live_status_interval_seconds = 15.0
     install_cmds = [
         *PiAgent.install_cmds,
-        (
-            "command -v codex >/dev/null 2>&1 && codex --version || "
-            f"sudo -E npm install -g @openai/codex@{CODEX_CLI_VERSION}"
-        ),
         *goal_plus_runtime_install_cmds(),
         r'''mkdir -p ~/.pi/agent/prompts ~/.pi/agent/skills
 cp /opt/goal-plus/.pi/prompts/goal-plus.md ~/.pi/agent/prompts/goal-plus.md
@@ -90,6 +85,7 @@ mkdir -p /home/agent/.goal-plus''',
         '__GOAL_PLUS_CLOSEOUT_RESERVE_SECONDS__; do not prescribe a turn limit. This is the '
         'normal first-dispatch budget for each candidate worker, not a cap on '
         'justified reinvestment.\n'
+        '__GOAL_PLUS_ROLE_MODEL_CONFIG__'
         'The total exploration time budget for this task is '
         '${{SFORGE_AGENT_TOTAL_BUDGET_SECONDS}} seconds. The exploration cutoff is '
         'Unix timestamp ${{SFORGE_AGENT_DEADLINE}}, and ${{REMAINING}} exploration '
@@ -142,7 +138,9 @@ mkdir -p /home/agent/.goal-plus''',
         'max_parallel is the single EdgeBench K value. Set strategy.worker_budget '
         'to __GOAL_PLUS_WORKER_BUDGET__, and '
         'strategy.config.reserve_closeout_seconds to '
-        '__GOAL_PLUS_CLOSEOUT_RESERVE_SECONDS__ without a turn limit. After every '
+        '__GOAL_PLUS_CLOSEOUT_RESERVE_SECONDS__ without a turn limit. '
+        '__GOAL_PLUS_ROLE_MODEL_CONFIG__'
+        'After every '
         'search_promote, run '
         'sforge-goal-plus-submit --details from the outer/main session and require '
         'a successful Judge result before recording or completing the search."'
@@ -203,12 +201,29 @@ mkdir -p /home/agent/.goal-plus''',
         if min_verifier_runs:
             worker_budget["min_verifier_runs"] = min_verifier_runs
         worker_budget_text = json.dumps(worker_budget)
+        role_model_config = ""
+        if self._config.agent_extra_env.get("SFORGE_GOAL_PLUS_WORKER_MODEL"):
+            role_model_config = (
+                "Freeze strategy.worker_launch.model to "
+                "${SFORGE_GOAL_PLUS_WORKER_MODEL} and its reasoning_effort to "
+                "${SFORGE_GOAL_PLUS_WORKER_REASONING_EFFORT}. Freeze "
+                "strategy.models to one entry using that model, count "
+                "${SFORGE_GOAL_PLUS_PARALLEL_NUM}, and the same reasoning effort. "
+                "Freeze strategy.evidence_annotator.model to "
+                "${GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL}, derive pi_provider from "
+                "that qualified model reference, set reasoning_effort to "
+                "${GOAL_PLUS_EVIDENCE_ANNOTATOR_REASONING_EFFORT}, and set "
+                "timeout_seconds to "
+                "${SFORGE_GOAL_PLUS_EVIDENCE_ANNOTATOR_TIMEOUT_SECONDS}. "
+            )
         return cmd.replace(
             "__GOAL_PLUS_PARALLEL_NUM__", str(parallel_num)
         ).replace(
             "__GOAL_PLUS_WORKER_BUDGET__", worker_budget_text
         ).replace(
             "__GOAL_PLUS_CLOSEOUT_RESERVE_SECONDS__", str(closeout_reserve)
+        ).replace(
+            "__GOAL_PLUS_ROLE_MODEL_CONFIG__", role_model_config
         )
 
     def get_finalization_grace_seconds(self) -> int:

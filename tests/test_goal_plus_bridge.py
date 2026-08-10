@@ -162,8 +162,14 @@ def test_archive_best_uses_exact_verified_commit(tmp_path: Path) -> None:
     subprocess.run(
         ["git", "config", "user.name", "test"], cwd=workspace, check=True
     )
-    (workspace / "solution.cpp").write_text("optimized\n", encoding="utf-8")
-    subprocess.run(["git", "add", "solution.cpp"], cwd=workspace, check=True)
+    (workspace / "outputs" / "figures").mkdir(parents=True)
+    (workspace / "outputs" / "report.md").write_text(
+        "optimized\n", encoding="utf-8"
+    )
+    (workspace / "outputs" / "figures" / "summary.txt").write_text(
+        "summary\n", encoding="utf-8"
+    )
+    subprocess.run(["git", "add", "outputs"], cwd=workspace, check=True)
     subprocess.run(["git", "commit", "-qm", "best"], cwd=workspace, check=True)
     best_commit = subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=workspace, text=True
@@ -184,6 +190,26 @@ def test_archive_best_uses_exact_verified_commit(tmp_path: Path) -> None:
         },
     )
     _write_json(
+        run_dir / "best.json",
+        {
+            "schema_version": 1,
+            "run_id": "run_1",
+            "candidate_id": "c001",
+            "iteration": 1,
+            "commit": best_commit,
+            "score": 9.0,
+            "metric_name": "combined_score",
+            "metric_direction": "maximize",
+            "artifact_hash": "artifact-1",
+            "workspace": "workspace/c001",
+            "changed_files": [
+                "outputs/figures/summary.txt",
+                "outputs/report.md",
+            ],
+            "updated_at": "2026-08-10T10:01:00Z",
+        },
+    )
+    _write_json(
         run_dir / "candidates" / "c001" / "candidate.json",
         {
             "candidate_id": "c001",
@@ -201,6 +227,8 @@ def test_archive_best_uses_exact_verified_commit(tmp_path: Path) -> None:
                     "git_artifact_clean": True,
                     "touched_denied_files": False,
                     "changed_outside_allowed": False,
+                    "disposition": "keep",
+                    "artifact_hash": "artifact-1",
                 }
             ],
         },
@@ -209,7 +237,7 @@ def test_archive_best_uses_exact_verified_commit(tmp_path: Path) -> None:
     output = tmp_path / "best.tar.gz"
     result = archive_best(
         root=root,
-        submit_paths=["solution.cpp"],
+        submit_paths=["outputs/"],
         output=output,
     )
 
@@ -221,7 +249,8 @@ def test_archive_best_uses_exact_verified_commit(tmp_path: Path) -> None:
         "local_score": 9.0,
     }
     with tarfile.open(output, "r:gz") as archive:
-        assert archive.extractfile("solution.cpp").read() == b"optimized\n"
+        assert archive.extractfile("outputs/report.md").read() == b"optimized\n"
+        assert archive.extractfile("outputs/figures/summary.txt").read() == b"summary\n"
 
 
 def test_archive_best_returns_none_before_first_verified_candidate(

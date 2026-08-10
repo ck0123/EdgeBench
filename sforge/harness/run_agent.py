@@ -317,6 +317,19 @@ def _extract_goal_plus_best_archive(
     return _read_file_from_container(backend, handle, archive_path), best
 
 
+def _extract_final_archive_from_container(
+    backend: ContainerBackend,
+    handle: ContainerHandle,
+    task_spec: TaskSpec,
+    goal_plus: bool,
+) -> bytes:
+    if goal_plus:
+        prepared = _extract_goal_plus_best_archive(backend, handle)
+        if prepared is not None:
+            return prepared[0]
+    return _extract_archive_from_container(backend, handle, task_spec)
+
+
 def _wait_for_auto_eval_result(
     host_judge_url: str,
     submission_id: str,
@@ -1083,7 +1096,12 @@ def run_agent(
 
         # 8. Extract final archive (tar of submit_paths)
         try:
-            final_archive = _extract_archive_from_container(backend, handle, task_spec)
+            final_archive = _extract_final_archive_from_container(
+                backend,
+                handle,
+                task_spec,
+                bool(getattr(agent, "install_goal_plus_bridge", False)),
+            )
             (log_dir / "final_archive.tar.gz").write_bytes(final_archive)
             logger.info(f"Final archive: {len(final_archive)} bytes")
         except Exception as e:
@@ -1262,7 +1280,12 @@ def run_agent(
         interrupted_archive = b""
         try:
             if handle is not None:
-                interrupted_archive = _extract_archive_from_container(backend, handle, task_spec)
+                interrupted_archive = _extract_final_archive_from_container(
+                    backend,
+                    handle,
+                    task_spec,
+                    bool(getattr(agent, "install_goal_plus_bridge", False)),
+                )
                 (log_dir / "final_archive.tar.gz").write_bytes(interrupted_archive)
                 logger.info(f"Final archive (interrupted): {len(interrupted_archive)} bytes")
         except Exception:

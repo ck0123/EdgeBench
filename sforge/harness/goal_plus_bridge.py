@@ -156,20 +156,32 @@ def archive_best(
     if latest is None:
         return None
     run_path, run = latest
-    candidate_id = run.get("best_candidate_id")
-    if not isinstance(candidate_id, str) or not candidate_id:
+    if run.get("invalidated_at"):
+        raise BridgeError("cannot archive an invalidated Goal Plus run")
+    best_path = run_path.parent / "best.json"
+    if not best_path.is_file():
         return None
+    best = _read_json(best_path)
+    candidate_id = best.get("candidate_id")
+    iteration_number = best.get("iteration")
+    commit = best.get("commit")
+    score = best.get("score")
+    artifact_hash = best.get("artifact_hash")
+    workspace_value = best.get("workspace")
+    if (
+        best.get("schema_version") != 1
+        or best.get("run_id") != run.get("run_id")
+        or not isinstance(candidate_id, str)
+        or not isinstance(iteration_number, int)
+        or not isinstance(commit, str)
+        or not commit
+        or not isinstance(artifact_hash, str)
+        or not isinstance(workspace_value, str)
+    ):
+        raise BridgeError("Goal Plus best manifest is invalid")
 
     candidate_path = run_path.parent / "candidates" / candidate_id / "candidate.json"
     candidate = _read_json(candidate_path)
-    score_report = candidate.get("score_report")
-    if not isinstance(score_report, dict):
-        raise BridgeError("best candidate has no score_report")
-    iteration_number = score_report.get("best_iteration")
-    commit = score_report.get("best_git_head")
-    if not isinstance(iteration_number, int) or not isinstance(commit, str) or not commit:
-        raise BridgeError("best candidate has no verifier-backed Git revision")
-
     iteration = next(
         (
             item
@@ -185,14 +197,18 @@ def archive_best(
         or iteration.get("git_artifact_clean") is not True
         or iteration.get("touched_denied_files") is True
         or iteration.get("changed_outside_allowed") is True
-        or iteration.get("score") != run.get("best_score")
+        or iteration.get("disposition") not in {"keep", "retain"}
+        or iteration.get("score") != score
+        or iteration.get("artifact_hash") != artifact_hash
     ):
-        raise BridgeError("Goal Plus best fields do not identify one settled iteration")
+        raise BridgeError("Goal Plus best manifest does not identify one settled iteration")
 
     task = candidate.get("task")
     if not isinstance(task, dict) or not isinstance(task.get("workspace"), str):
         raise BridgeError("best candidate has no workspace in candidate.json")
-    workspace = Path(task["workspace"]).resolve()
+    workspace = (run_path.parent / _safe_relative(workspace_value)).resolve()
+    if workspace != Path(task["workspace"]).resolve():
+        raise BridgeError("Goal Plus best manifest workspace does not match candidate")
     if not workspace.is_dir():
         raise BridgeError(f"best candidate workspace is missing: {workspace}")
 
@@ -247,7 +263,7 @@ def archive_best(
         "candidate_id": candidate_id,
         "iteration": iteration_number,
         "commit": commit,
-        "local_score": iteration.get("score"),
+        "local_score": score,
     }
 
 

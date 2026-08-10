@@ -120,6 +120,26 @@ def test_publish_goal_plus_auto_eval_keeps_round_history(tmp_path: Path) -> None
     ]
 
 
+def test_goal_plus_final_archive_uses_verifier_backed_best(monkeypatch) -> None:
+    monkeypatch.setattr(
+        run_agent,
+        "_extract_goal_plus_best_archive",
+        lambda backend, handle: (b"best-archive", {"commit": "abc123"}),
+    )
+    monkeypatch.setattr(
+        run_agent,
+        "_extract_archive_from_container",
+        lambda *args: b"task-workspace",
+    )
+
+    assert run_agent._extract_final_archive_from_container(
+        object(), object(), object(), True
+    ) == b"best-archive"
+    assert run_agent._extract_final_archive_from_container(
+        object(), object(), object(), False
+    ) == b"task-workspace"
+
+
 def test_goal_plus_auto_eval_submits_one_best_commit_and_publishes_feedback(
     tmp_path: Path,
     monkeypatch,

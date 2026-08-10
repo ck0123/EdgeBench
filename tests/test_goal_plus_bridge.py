@@ -82,6 +82,50 @@ def test_sync_promotion_materializes_selected_candidate(tmp_path: Path) -> None:
     assert repeated["fingerprint"] == result["fingerprint"]
 
 
+def test_sync_promotion_materializes_submitted_directory(tmp_path: Path) -> None:
+    root, source, workspace = _promotion_fixture(tmp_path)
+    candidate_path = (
+        root / "runs" / "run_1" / "candidates" / "c001" / "candidate.json"
+    )
+    candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+    candidate["detected_changed_files"] = [
+        "outputs/report.md",
+        "outputs/results.json",
+        "outputs/figures/summary.txt",
+        "notes.txt",
+    ]
+    _write_json(candidate_path, candidate)
+
+    (workspace / "outputs" / "figures").mkdir(parents=True)
+    (workspace / "outputs" / "report.md").write_text("report\n", encoding="utf-8")
+    (workspace / "outputs" / "results.json").write_text("{}\n", encoding="utf-8")
+    (workspace / "outputs" / "figures" / "summary.txt").write_text(
+        "figure\n", encoding="utf-8"
+    )
+    (workspace / "outputs" / "unverified.cache").write_text(
+        "ignored\n", encoding="utf-8"
+    )
+
+    result = sync_promotion(root=root, source=source, submit_paths=["outputs/"])
+
+    assert result["status"] == "materialized"
+    assert [row["path"] for row in result["files"]] == [
+        "outputs/figures/summary.txt",
+        "outputs/report.md",
+        "outputs/results.json",
+    ]
+    assert (source / "outputs" / "report.md").read_text(
+        encoding="utf-8"
+    ) == "report\n"
+    assert (source / "outputs" / "results.json").read_text(
+        encoding="utf-8"
+    ) == "{}\n"
+    assert (source / "outputs" / "figures" / "summary.txt").read_text(
+        encoding="utf-8"
+    ) == "figure\n"
+    assert not (source / "outputs" / "unverified.cache").exists()
+
+
 def test_sync_promotion_rejects_no_submitted_change(tmp_path: Path) -> None:
     root, source, _ = _promotion_fixture(tmp_path)
     candidate_path = root / "runs" / "run_1" / "candidates" / "c001" / "candidate.json"

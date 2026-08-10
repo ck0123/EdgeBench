@@ -68,6 +68,25 @@ def _safe_relative(value: str) -> Path:
     return path
 
 
+def _submitted_changed_paths(
+    changed: Any,
+    submit_paths: list[Path],
+) -> list[Path]:
+    if not isinstance(changed, list):
+        return []
+    matched: set[Path] = set()
+    for value in changed:
+        if not isinstance(value, str):
+            continue
+        relative = _safe_relative(value)
+        if any(
+            relative == submitted or submitted in relative.parents
+            for submitted in submit_paths
+        ):
+            matched.add(relative)
+    return sorted(matched, key=str)
+
+
 def _latest_promotion(root: Path, run_id: str | None = None) -> dict[str, Any]:
     runs_dir = root / "runs"
     candidates: list[tuple[int, Path, dict[str, Any], str, Path]] = []
@@ -259,17 +278,19 @@ def sync_promotion(
         raise BridgeError(f"selected candidate workspace is missing: {candidate_workspace}")
 
     patch_text = patch_path.read_text(encoding="utf-8", errors="replace")
-    changed = candidate.get("detected_changed_files")
-    changed_files = set(changed) if isinstance(changed, list) else set()
     safe_submit_paths = [_safe_relative(value) for value in submit_paths]
-    if not patch_text.strip() or not any(str(path) in changed_files for path in safe_submit_paths):
+    submitted_changes = _submitted_changed_paths(
+        candidate.get("detected_changed_files"),
+        safe_submit_paths,
+    )
+    if not patch_text.strip() or not submitted_changes:
         raise BridgeError(
             "selected promotion contains no change to an EdgeBench submitted file"
         )
 
     file_rows: list[dict[str, str]] = []
     pending: list[tuple[Path, Path]] = []
-    for relative in safe_submit_paths:
+    for relative in submitted_changes:
         candidate_file = candidate_workspace / relative
         source_file = source / relative
         if not candidate_file.is_file() or candidate_file.is_symlink():

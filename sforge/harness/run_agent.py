@@ -44,8 +44,8 @@ import requests
 
 from sforge.harness.agent import Agent
 from sforge.harness.agent.goal_plus_runtime import (
+    GOAL_PLUS_EXTERNAL_EVIDENCE_DIR,
     GOAL_PLUS_EXTERNAL_EVIDENCE_ENV,
-    GOAL_PLUS_EXTERNAL_EVIDENCE_FILE,
 )
 from sforge.harness.backend import ContainerBackend, ContainerHandle
 from sforge.harness.backend.base import (
@@ -163,7 +163,7 @@ def _build_agent_env(
     if getattr(agent, "install_goal_plus_bridge", False):
         env.setdefault(
             GOAL_PLUS_EXTERNAL_EVIDENCE_ENV,
-            GOAL_PLUS_EXTERNAL_EVIDENCE_FILE,
+            GOAL_PLUS_EXTERNAL_EVIDENCE_DIR,
         )
 
     return env
@@ -399,12 +399,15 @@ def _publish_goal_plus_auto_eval(
     handle: ContainerHandle,
     record: dict,
     record_path: Path,
-    external_evidence_file: str | None,
+    external_evidence_dir: str | None,
 ) -> None:
     write_json_atomic(record_path, record)
-    if not external_evidence_file:
+    if not external_evidence_dir:
         return
-    destination = PurePosixPath(external_evidence_file)
+    round_id = record.get("evaluation", {}).get("round_id")
+    if not isinstance(round_id, str) or PurePosixPath(round_id).name != round_id:
+        raise RuntimeError("Goal Plus auto-eval record has an invalid round ID")
+    destination = PurePosixPath(external_evidence_dir) / f"{round_id}.json"
     temp_destination = destination.with_name(f".{destination.name}.tmp")
     backend.copy_to_container(handle, record_path, temp_destination)
     moved = backend.exec_run(
@@ -428,7 +431,7 @@ def _auto_eval_loop(
     logger,
     log_dir: Path,
     goal_plus: bool = False,
-    external_evidence_file: str | None = None,
+    external_evidence_dir: str | None = None,
 ) -> None:
     """Host-side auto-eval: periodically extract code and submit to judge.
 
@@ -490,7 +493,7 @@ def _auto_eval_loop(
                         handle,
                         record,
                         log_dir / "submissions" / round_id / "goal-plus.json",
-                        external_evidence_file,
+                        external_evidence_dir,
                     )
                     with open(ticks_log, "a") as f:
                         f.write(

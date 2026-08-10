@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from types import SimpleNamespace
 
 import sforge.harness.run_agent as run_agent
 from sforge.harness.agent.codex_goal_plus import CodexGoalPlusAgent
 from sforge.harness.agent.goal_plus_runtime import (
+    GOAL_PLUS_EXTERNAL_EVIDENCE_DIR,
     GOAL_PLUS_EXTERNAL_EVIDENCE_ENV,
-    GOAL_PLUS_EXTERNAL_EVIDENCE_FILE,
 )
 from sforge.harness.config import SForgeConfig
 from sforge.harness.run_agent import _build_agent_env, _compact_auto_eval_record
@@ -31,7 +32,7 @@ class _OneTickEvent:
 def test_goal_plus_auto_eval_external_evidence_is_enabled_by_default() -> None:
     env = _build_agent_env(CodexGoalPlusAgent(SForgeConfig()), "gpt-5.5")
 
-    assert env[GOAL_PLUS_EXTERNAL_EVIDENCE_ENV] == GOAL_PLUS_EXTERNAL_EVIDENCE_FILE
+    assert env[GOAL_PLUS_EXTERNAL_EVIDENCE_ENV] == GOAL_PLUS_EXTERNAL_EVIDENCE_DIR
 
     disabled = _build_agent_env(
         CodexGoalPlusAgent(
@@ -88,6 +89,34 @@ def test_compact_auto_eval_record_keeps_actionable_official_feedback() -> None:
     assert record["evaluation"]["score_0_100"] == 73.5
     assert record["evaluation"]["failed_checks"] == [
         {"name": "case_slow", "status": "FAILED", "message": "timeout"}
+    ]
+
+
+def test_publish_goal_plus_auto_eval_keeps_round_history(tmp_path: Path) -> None:
+    destinations = []
+
+    class Backend:
+        def copy_to_container(self, handle, source, destination) -> None:
+            assert source.read_text(encoding="utf-8")
+            destinations.append(destination)
+
+        def exec_run(self, handle, command):
+            return SimpleNamespace(exit_code=0, output="")
+
+    record = {
+        "artifact": {"source": "goal_plus_best"},
+        "evaluation": {"round_id": "auto-2"},
+    }
+    run_agent._publish_goal_plus_auto_eval(
+        Backend(),
+        object(),
+        record,
+        tmp_path / "submissions" / "auto-2" / "goal-plus.json",
+        "/home/agent/.goal-plus/edgebench/evaluations",
+    )
+
+    assert destinations == [
+        Path("/home/agent/.goal-plus/edgebench/evaluations/.auto-2.json.tmp"),
     ]
 
 
@@ -148,7 +177,7 @@ def test_goal_plus_auto_eval_submits_one_best_commit_and_publishes_feedback(
         logging.getLogger(__name__),
         tmp_path,
         True,
-        "/home/agent/.goal-plus/edgebench/latest-auto-eval.json",
+        "/home/agent/.goal-plus/edgebench/evaluations",
     )
 
     assert len(submitted) == 1

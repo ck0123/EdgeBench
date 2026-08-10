@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
+import tarfile
 
 import pytest
 
-from sforge.harness.goal_plus_bridge import BridgeError, sync_promotion
+from sforge.harness.goal_plus_bridge import BridgeError, archive_best, sync_promotion
 
 
 def _write_json(path: Path, value: dict) -> None:
@@ -100,3 +102,99 @@ def test_sync_promotion_rejects_different_source_workspace(tmp_path: Path) -> No
             source=source.parent / "other",
             submit_paths=["solution.cpp"],
         )
+
+
+def test_archive_best_uses_exact_verified_commit(tmp_path: Path) -> None:
+    root = tmp_path / ".goal-plus"
+    run_dir = root / "runs" / "run_1"
+    workspace = run_dir / "workspace" / "c001"
+    workspace.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q"], cwd=workspace, check=True)
+    subprocess.run(
+        ["git", "config", "user.email", "test@example.invalid"],
+        cwd=workspace,
+        check=True,
+    )
+    subprocess.run(
+        ["git", "config", "user.name", "test"], cwd=workspace, check=True
+    )
+    (workspace / "solution.cpp").write_text("optimized\n", encoding="utf-8")
+    subprocess.run(["git", "add", "solution.cpp"], cwd=workspace, check=True)
+    subprocess.run(["git", "commit", "-qm", "best"], cwd=workspace, check=True)
+    best_commit = subprocess.check_output(
+        ["git", "rev-parse", "HEAD"], cwd=workspace, text=True
+    ).strip()
+    (workspace / "results.tsv").write_text("score\t9\n", encoding="utf-8")
+    subprocess.run(["git", "add", "results.tsv"], cwd=workspace, check=True)
+    subprocess.run(["git", "commit", "-qm", "ledger"], cwd=workspace, check=True)
+    (workspace / "solution.cpp").write_text("unverified\n", encoding="utf-8")
+
+    _write_json(
+        run_dir / "run.json",
+        {
+            "run_id": "run_1",
+            "state": "running",
+            "created_at": "2026-08-10T10:00:00Z",
+            "best_candidate_id": "c001",
+            "best_score": 9.0,
+        },
+    )
+    _write_json(
+        run_dir / "candidates" / "c001" / "candidate.json",
+        {
+            "candidate_id": "c001",
+            "task": {"workspace": str(workspace)},
+            "score_report": {
+                "best_iteration": 1,
+                "best_git_head": best_commit,
+            },
+            "iterations": [
+                {
+                    "iteration": 1,
+                    "score": 9.0,
+                    "process_passed": True,
+                    "git_head": best_commit,
+                    "git_artifact_clean": True,
+                    "touched_denied_files": False,
+                    "changed_outside_allowed": False,
+                }
+            ],
+        },
+    )
+
+    output = tmp_path / "best.tar.gz"
+    result = archive_best(
+        root=root,
+        submit_paths=["solution.cpp"],
+        output=output,
+    )
+
+    assert result == {
+        "run_id": "run_1",
+        "candidate_id": "c001",
+        "iteration": 1,
+        "commit": best_commit,
+        "local_score": 9.0,
+    }
+    with tarfile.open(output, "r:gz") as archive:
+        assert archive.extractfile("solution.cpp").read() == b"optimized\n"
+
+
+def test_archive_best_returns_none_before_first_verified_candidate(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".goal-plus"
+    _write_json(
+        root / "runs" / "run_1" / "run.json",
+        {
+            "run_id": "run_1",
+            "state": "running",
+            "created_at": "2026-08-10T10:00:00Z",
+            "best_candidate_id": None,
+            "best_score": None,
+        },
+    )
+    output = tmp_path / "best.tar.gz"
+
+    assert archive_best(root=root, submit_paths=["solution.cpp"], output=output) is None
+    assert not output.exists()

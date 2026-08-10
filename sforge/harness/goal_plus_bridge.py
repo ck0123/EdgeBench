@@ -16,6 +16,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 from typing import Any
 
@@ -34,7 +35,7 @@ def _read_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def _write_json(path: Path, value: dict[str, Any]) -> None:
+def write_json_atomic(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
         mode="w",
@@ -102,6 +103,132 @@ def _latest_promotion(root: Path, run_id: str | None = None) -> dict[str, Any]:
         "candidate_path": candidate_path,
         "candidate": _read_json(candidate_path),
         "patch_path": run_path.parent / "promotion" / f"{candidate_id}.patch",
+    }
+
+
+def _latest_run(root: Path) -> tuple[Path, dict[str, Any]] | None:
+    runs: list[tuple[str, int, Path, dict[str, Any]]] = []
+    for run_path in (root / "runs").glob("*/run.json"):
+        if not run_path.is_file():
+            continue
+        run = _read_json(run_path)
+        runs.append(
+            (
+                str(run.get("created_at") or ""),
+                run_path.stat().st_mtime_ns,
+                run_path,
+                run,
+            )
+        )
+    if not runs:
+        return None
+    _, _, run_path, run = max(runs, key=lambda item: (item[0], item[1]))
+    return run_path, run
+
+
+def archive_best(
+    *,
+    root: Path,
+    submit_paths: list[str],
+    output: Path,
+) -> dict[str, Any] | None:
+    """Archive the latest run's exact verifier-backed best Git revision."""
+    latest = _latest_run(root)
+    if latest is None:
+        return None
+    run_path, run = latest
+    candidate_id = run.get("best_candidate_id")
+    if not isinstance(candidate_id, str) or not candidate_id:
+        return None
+
+    candidate_path = run_path.parent / "candidates" / candidate_id / "candidate.json"
+    candidate = _read_json(candidate_path)
+    score_report = candidate.get("score_report")
+    if not isinstance(score_report, dict):
+        raise BridgeError("best candidate has no score_report")
+    iteration_number = score_report.get("best_iteration")
+    commit = score_report.get("best_git_head")
+    if not isinstance(iteration_number, int) or not isinstance(commit, str) or not commit:
+        raise BridgeError("best candidate has no verifier-backed Git revision")
+
+    iteration = next(
+        (
+            item
+            for item in candidate.get("iterations") or []
+            if isinstance(item, dict) and item.get("iteration") == iteration_number
+        ),
+        None,
+    )
+    if (
+        iteration is None
+        or iteration.get("process_passed") is not True
+        or iteration.get("git_head") != commit
+        or iteration.get("git_artifact_clean") is not True
+        or iteration.get("touched_denied_files") is True
+        or iteration.get("changed_outside_allowed") is True
+        or iteration.get("score") != run.get("best_score")
+    ):
+        raise BridgeError("Goal Plus best fields do not identify one settled iteration")
+
+    task = candidate.get("task")
+    if not isinstance(task, dict) or not isinstance(task.get("workspace"), str):
+        raise BridgeError("best candidate has no workspace in candidate.json")
+    workspace = Path(task["workspace"]).resolve()
+    if not workspace.is_dir():
+        raise BridgeError(f"best candidate workspace is missing: {workspace}")
+
+    resolved = subprocess.run(
+        ["git", "-C", str(workspace), "rev-parse", "--verify", f"{commit}^{{commit}}"],
+        text=True,
+        capture_output=True,
+    )
+    if resolved.returncode != 0 or resolved.stdout.strip() != commit:
+        raise BridgeError(f"best candidate Git revision is unavailable: {commit}")
+
+    safe_submit_paths = [_safe_relative(value) for value in submit_paths]
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        dir=output.parent,
+        prefix=f".{output.name}.",
+        suffix=".tmp",
+        delete=False,
+    ) as handle:
+        temp_path = Path(handle.name)
+    try:
+        archived = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(workspace),
+                "archive",
+                "--format=tar.gz",
+                f"--output={temp_path}",
+                commit,
+                "--",
+                *(str(path) for path in safe_submit_paths),
+            ],
+            text=True,
+            capture_output=True,
+        )
+        if archived.returncode != 0:
+            raise BridgeError(
+                "cannot archive Goal Plus best revision: "
+                + (archived.stderr.strip() or archived.stdout.strip())
+            )
+        with tarfile.open(temp_path, "r:gz") as archive:
+            if not any(not member.isdir() for member in archive.getmembers()):
+                raise BridgeError("Goal Plus best archive contains no files")
+        os.replace(temp_path, output)
+    finally:
+        if temp_path.exists():
+            temp_path.unlink()
+
+    return {
+        "run_id": str(run.get("run_id") or run_path.parent.name),
+        "candidate_id": candidate_id,
+        "iteration": iteration_number,
+        "commit": commit,
+        "local_score": iteration.get("score"),
     }
 
 
@@ -208,7 +335,7 @@ def sync_promotion(
         "fingerprint": fingerprint,
         "files": file_rows,
     }
-    _write_json(root / "edgebench" / "latest-materialization.json", result)
+    write_json_atomic(root / "edgebench" / "latest-materialization.json", result)
     return result
 
 
@@ -255,7 +382,7 @@ def submit_promotion(
         "candidate_id": sync_result["candidate_id"],
         "judge_result": judge_result,
     }
-    _write_json(marker_path, marker)
+    write_json_atomic(marker_path, marker)
     return 0
 
 
@@ -266,6 +393,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--submit", action="store_true", default=default_submit)
     parser.add_argument("--details", action="store_true")
     parser.add_argument("--if-new", action="store_true")
+    parser.add_argument("--archive-best", metavar="PATH")
     return parser.parse_args(argv)
 
 
@@ -278,6 +406,14 @@ def main(argv: list[str] | None = None) -> int:
         print("ERROR: SFORGE_SUBMIT_PATHS is empty", file=sys.stderr)
         return 2
     try:
+        if args.archive_best:
+            result = archive_best(
+                root=root,
+                submit_paths=submit_paths,
+                output=Path(args.archive_best),
+            )
+            print(json.dumps({"goal_plus_best": result}, indent=2, sort_keys=True))
+            return 0
         result = sync_promotion(
             root=root,
             source=source,

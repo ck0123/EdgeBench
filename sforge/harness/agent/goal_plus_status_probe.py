@@ -76,6 +76,11 @@ def build_snapshot(root: Path) -> dict[str, Any]:
     promoted_candidate_ids: set[str] = set()
     search_run_states: dict[str, int] = {}
     session_verifier_runs = 0
+    annotation_tasks = 0
+    annotation_attempts = 0
+    annotation_views_published = 0
+    annotation_states: dict[str, int] = {}
+    annotation_monitors: list[dict[str, Any]] = []
 
     for run_path in sorted((root / "runs").glob("*/run.json")):
         run = _load(run_path)
@@ -89,6 +94,58 @@ def build_snapshot(root: Path) -> dict[str, Any]:
             selected_candidate_ids.add(selected)
             if state == "promoted":
                 promoted_candidate_ids.add(selected)
+
+        for annotation_path in sorted(
+            run_path.parent.glob(
+                "candidates/*/evidence-annotations/iteration-*.json"
+            )
+        ):
+            annotation = _load(annotation_path)
+            if annotation is None:
+                continue
+            annotation_tasks += 1
+            annotation_attempts += int(annotation.get("attempts") or 0)
+            state = str(annotation.get("state") or "unknown")
+            annotation_states[state] = annotation_states.get(state, 0) + 1
+            if isinstance(annotation.get("view"), dict):
+                annotation_views_published += 1
+
+        for monitor_path in sorted(
+            (run_path.parent / "evidence-annotator" / "attempts").glob("*.json")
+        ):
+            monitor = _load(monitor_path)
+            if monitor is None:
+                continue
+            annotation_monitors.append(
+                {
+                    key: monitor.get(key)
+                    for key in (
+                        "run_id",
+                        "candidate_id",
+                        "iteration",
+                        "attempt",
+                        "host",
+                        "model",
+                        "reasoning_effort",
+                        "timeout_seconds",
+                        "state",
+                        "started_at",
+                        "updated_at",
+                        "elapsed_seconds",
+                        "pid",
+                        "process_returncode",
+                        "stdout_bytes",
+                        "stderr_bytes",
+                        "json_lines",
+                        "non_json_lines",
+                        "event_type_counts",
+                        "assistant_event_type_counts",
+                        "last_events",
+                        "detail",
+                    )
+                    if monitor.get(key) is not None
+                }
+            )
 
         for candidate_path in sorted(
             (run_path.parent / "candidates").glob("*/candidate.json")
@@ -162,6 +219,21 @@ def build_snapshot(root: Path) -> dict[str, Any]:
         record["status"] in terminal and record["reports_ready"]
         for record in terminal_records
     )
+    annotation_monitors.sort(
+        key=lambda item: (
+            str(item.get("updated_at") or ""),
+            str(item.get("candidate_id") or ""),
+            int(item.get("iteration") or 0),
+            int(item.get("attempt") or 0),
+        )
+    )
+    active_monitor_states = {"starting", "running", "process_exited"}
+    active_annotation_monitors = [
+        item
+        for item in annotation_monitors
+        if item.get("state") in active_monitor_states
+    ]
+    recent_annotation_monitors = annotation_monitors[-8:]
     return {
         "schema_version": 1,
         "captured_at": datetime.now(timezone.utc)
@@ -184,6 +256,20 @@ def build_snapshot(root: Path) -> dict[str, Any]:
         "selected_candidate_ids": sorted(selected_candidate_ids),
         "promoted_candidate_ids": sorted(promoted_candidate_ids),
         "search_run_states": dict(sorted(search_run_states.items())),
+        "evidence_annotations": {
+            "tasks": annotation_tasks,
+            "attempts": annotation_attempts,
+            "views_published": annotation_views_published,
+            "states": dict(sorted(annotation_states.items())),
+            "active_attempts": active_annotation_monitors,
+            "recent_attempts": active_annotation_monitors
+            + [
+                item
+                for item in recent_annotation_monitors
+                if item not in active_annotation_monitors
+            ],
+            "monitor_files": len(annotation_monitors),
+        },
         "goal_statuses": goal_statuses,
         "terminal_ready": ready,
     }

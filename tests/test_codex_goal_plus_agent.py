@@ -270,9 +270,11 @@ def test_goal_plus_live_status_probe_reads_pi_durable_state(tmp_path) -> None:
     root = tmp_path / ".goal-plus"
     run = root / "runs" / "run_1"
     candidate = run / "candidates" / "c001"
+    annotations = candidate / "evidence-annotations"
+    annotation_monitors = run / "evidence-annotator" / "attempts"
     sessions = run / "agent_sessions"
     goal = root / "goal-plus" / "gp_0001"
-    for path in (candidate, sessions, goal):
+    for path in (candidate, annotations, annotation_monitors, sessions, goal):
         path.mkdir(parents=True)
     (run / "report.md").write_text("report", encoding="utf-8")
     (run / "report.html").write_text("<p>report</p>", encoding="utf-8")
@@ -294,6 +296,36 @@ def test_goal_plus_live_status_probe_reads_pi_durable_state(tmp_path) -> None:
                     {"iteration": 1, "process_passed": True, "score": 7.0},
                     {"iteration": 2, "process_passed": True, "score": 6.0},
                 ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (annotations / "iteration-0001.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run_1",
+                "candidate_id": "c001",
+                "iteration": 1,
+                "state": "completed",
+                "attempts": 1,
+                "view": {"description": "Replaced the scalar loop with VLIW lanes."},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (annotation_monitors / "c001-iteration-0001-attempt-01.json").write_text(
+        json.dumps(
+            {
+                "run_id": "run_1",
+                "candidate_id": "c001",
+                "iteration": 1,
+                "attempt": 1,
+                "host": "pi-rpc",
+                "state": "running",
+                "elapsed_seconds": 2.5,
+                "json_lines": 4,
+                "event_type_counts": {"message_update": 4},
+                "updated_at": "2026-07-31T10:44:00Z",
             }
         ),
         encoding="utf-8",
@@ -340,6 +372,12 @@ def test_goal_plus_live_status_probe_reads_pi_durable_state(tmp_path) -> None:
     assert snapshot["agent_session_count"] == 1
     assert snapshot["worker_verifier_runs"] == 2
     assert snapshot["promoted_candidate_ids"] == ["c001"]
+    assert snapshot["evidence_annotations"]["tasks"] == 1
+    assert snapshot["evidence_annotations"]["views_published"] == 1
+    assert snapshot["evidence_annotations"]["states"] == {"completed": 1}
+    assert snapshot["evidence_annotations"]["active_attempts"][0][
+        "event_type_counts"
+    ] == {"message_update": 4}
     assert snapshot["terminal_ready"] is True
 
 

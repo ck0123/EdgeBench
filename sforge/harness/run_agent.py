@@ -43,6 +43,10 @@ from urllib.parse import urlparse
 import requests
 
 from sforge.harness.agent import Agent
+from sforge.harness.agent.goal_plus_runtime import (
+    GOAL_PLUS_EXTERNAL_EVIDENCE_DIR,
+    GOAL_PLUS_EXTERNAL_EVIDENCE_ENV,
+)
 from sforge.harness.backend import ContainerBackend, ContainerHandle
 from sforge.harness.backend.base import (
     MAX_STREAM_CAPTURE_BYTES,
@@ -60,6 +64,7 @@ from sforge.harness.evolve_scripts import (
     generate_game_prompt,
     generate_submit_script,
 )
+from sforge.harness.goal_plus_bridge import write_json_atomic
 from sforge.harness.task_spec import TaskSpec
 
 
@@ -155,6 +160,12 @@ def _build_agent_env(
 
     agent.augment_env(env, model)
 
+    if getattr(agent, "install_goal_plus_bridge", False):
+        env.setdefault(
+            GOAL_PLUS_EXTERNAL_EVIDENCE_ENV,
+            GOAL_PLUS_EXTERNAL_EVIDENCE_DIR,
+        )
+
     return env
 
 
@@ -243,6 +254,22 @@ def _install_tools(
         logger.info("Stop hook disabled by flag")
 
 
+def _read_file_from_container(
+    backend: ContainerBackend,
+    handle: ContainerHandle,
+    path: PurePosixPath,
+) -> bytes:
+    raw = backend.copy_from_container(handle, path)
+    with _tarfile.open(fileobj=io.BytesIO(raw)) as outer:
+        member = next((item for item in outer.getmembers() if item.isfile()), None)
+        if member is None:
+            raise RuntimeError(f"container archive contains no file for {path}")
+        extracted = outer.extractfile(member)
+        if extracted is None:
+            raise RuntimeError(f"cannot extract container file {path}")
+        return extracted.read()
+
+
 def _extract_archive_from_container(
     backend: ContainerBackend,
     handle: ContainerHandle,
@@ -257,12 +284,153 @@ def _extract_archive_from_container(
         f"--exclude=.git {excludes} {submit_paths}"
     )
     backend.exec_run(handle, ["/bin/bash", "-c", tar_cmd])
-    raw = backend.copy_from_container(handle, PurePosixPath("/tmp/final.tar.gz"))
-    outer = _tarfile.open(fileobj=io.BytesIO(raw))
-    member = outer.getmembers()[0]
-    archive = outer.extractfile(member).read()
-    outer.close()
-    return archive
+    return _read_file_from_container(
+        backend,
+        handle,
+        PurePosixPath("/tmp/final.tar.gz"),
+    )
+
+
+def _extract_goal_plus_best_archive(
+    backend: ContainerBackend,
+    handle: ContainerHandle,
+) -> tuple[bytes, dict] | None:
+    archive_path = PurePosixPath("/tmp/sforge-goal-plus-best.tar.gz")
+    result = backend.exec_run(
+        handle,
+        [
+            "/usr/local/bin/sforge-goal-plus-sync",
+            "--archive-best",
+            str(archive_path),
+        ],
+    )
+    if result.exit_code != 0:
+        raise RuntimeError(result.output.strip() or "Goal Plus best archive failed")
+    try:
+        best = json.loads(result.output).get("goal_plus_best")
+    except (AttributeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Goal Plus best archive returned invalid JSON") from exc
+    if best is None:
+        return None
+    if not isinstance(best, dict):
+        raise RuntimeError("Goal Plus best archive metadata is not an object")
+    return _read_file_from_container(backend, handle, archive_path), best
+
+
+def _extract_final_archive_from_container(
+    backend: ContainerBackend,
+    handle: ContainerHandle,
+    task_spec: TaskSpec,
+    goal_plus: bool,
+) -> bytes:
+    if goal_plus:
+        prepared = _extract_goal_plus_best_archive(backend, handle)
+        if prepared is not None:
+            return prepared[0]
+    return _extract_archive_from_container(backend, handle, task_spec)
+
+
+def _wait_for_auto_eval_result(
+    host_judge_url: str,
+    submission_id: str,
+    stop_event: threading.Event,
+) -> dict | None:
+    deadline = time.monotonic() + 7200
+    while not stop_event.is_set() and time.monotonic() < deadline:
+        try:
+            response = requests.get(
+                f"{host_judge_url}/api/v1/result/{submission_id}",
+                timeout=30,
+            )
+            response.raise_for_status()
+            result = response.json()
+            if not isinstance(result, dict):
+                raise ValueError("Judge result is not an object")
+            if result.get("status") in {"completed", "error"}:
+                return result
+        except (requests.RequestException, ValueError):
+            pass
+        stop_event.wait(10)
+    return None
+
+
+def _compact_auto_eval_record(
+    *,
+    artifact: dict,
+    submission_id: str,
+    round_id: str,
+    result: dict,
+) -> dict:
+    report = result.get("report")
+    report = report if isinstance(report, dict) else {}
+    evaluation = {
+        "authority": "edgebench_official_hidden_judge",
+        "submission_id": submission_id,
+        "round_id": round_id,
+        "status": result.get("status"),
+        "published_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    for key in (
+        "valid",
+        "passed",
+        "total_tests",
+        "failed",
+        "pass_rate",
+        "score",
+        "score_0_100",
+        "score_0_100_extended",
+        "summary",
+        "metrics",
+    ):
+        if key in report:
+            evaluation[key] = report[key]
+    if result.get("error") is not None:
+        evaluation["error"] = result["error"]
+
+    details = report.get("details") or report.get("test_details") or []
+    failures = [
+        {
+            key: item[key]
+            for key in ("name", "status", "message", "score")
+            if key in item and item[key] is not None
+        }
+        for item in details
+        if isinstance(item, dict)
+        and str(item.get("status", "")).upper() != "PASSED"
+    ][:20]
+    if failures:
+        evaluation["failed_checks"] = failures
+    return {
+        "source": "edgebench",
+        "artifact": artifact,
+        "evaluation": evaluation,
+    }
+
+
+def _publish_goal_plus_auto_eval(
+    backend: ContainerBackend,
+    handle: ContainerHandle,
+    record: dict,
+    record_path: Path,
+    external_evidence_dir: str | None,
+) -> None:
+    write_json_atomic(record_path, record)
+    if not external_evidence_dir:
+        return
+    round_id = record.get("evaluation", {}).get("round_id")
+    if not isinstance(round_id, str) or PurePosixPath(round_id).name != round_id:
+        raise RuntimeError("Goal Plus auto-eval record has an invalid round ID")
+    destination = PurePosixPath(external_evidence_dir) / f"{round_id}.json"
+    temp_destination = destination.with_name(f".{destination.name}.tmp")
+    backend.copy_to_container(handle, record_path, temp_destination)
+    moved = backend.exec_run(
+        handle,
+        ["mv", "-f", str(temp_destination), str(destination)],
+    )
+    if moved.exit_code != 0:
+        raise RuntimeError(
+            moved.output.strip() or "cannot publish Goal Plus external evidence"
+        )
 
 
 def _auto_eval_loop(
@@ -275,10 +443,13 @@ def _auto_eval_loop(
     stop_event: threading.Event,
     logger,
     log_dir: Path,
+    goal_plus: bool = False,
+    external_evidence_dir: str | None = None,
 ) -> None:
     """Host-side auto-eval: periodically extract code and submit to judge.
 
-    Runs as a daemon thread. Fire-and-forget — does not poll for results.
+    Runs as a daemon thread. Goal Plus evaluations publish completed feedback;
+    plain-agent evaluations remain fire-and-forget.
     Writes tick entries to auto_eval_ticks.log for post-mortem inspection.
     """
     ticks_log = log_dir / "auto_eval_ticks.log"
@@ -287,7 +458,17 @@ def _auto_eval_loop(
         if stop_event.is_set():
             break
         try:
-            archive = _extract_archive_from_container(backend, handle, task_spec)
+            artifact = {"source": "task_workspace"}
+            prepared = (
+                _extract_goal_plus_best_archive(backend, handle)
+                if goal_plus
+                else None
+            )
+            if prepared is None:
+                archive = _extract_archive_from_container(backend, handle, task_spec)
+            else:
+                archive, best = prepared
+                artifact = {"source": "goal_plus_best", **best}
             resp = requests.post(
                 f"{host_judge_url}/api/v1/submit",
                 data={
@@ -303,6 +484,35 @@ def _auto_eval_loop(
             ts = time.strftime("%Y-%m-%dT%H:%M:%S")
             with open(ticks_log, "a") as f:
                 f.write(f"[{ts}] submitted {len(archive)} bytes -> {data.get('submission_id', '?')} round={data.get('round_id', '?')}\n")
+            if goal_plus:
+                submission_id = data.get("submission_id")
+                round_id = data.get("round_id")
+                if not isinstance(submission_id, str) or not isinstance(round_id, str):
+                    raise RuntimeError("Judge submission response omitted its identity")
+                result = _wait_for_auto_eval_result(
+                    host_judge_url,
+                    submission_id,
+                    stop_event,
+                )
+                if result is not None:
+                    record = _compact_auto_eval_record(
+                        artifact=artifact,
+                        submission_id=submission_id,
+                        round_id=round_id,
+                        result=result,
+                    )
+                    _publish_goal_plus_auto_eval(
+                        backend,
+                        handle,
+                        record,
+                        log_dir / "submissions" / round_id / "goal-plus.json",
+                        external_evidence_dir,
+                    )
+                    with open(ticks_log, "a") as f:
+                        f.write(
+                            f"[{record['evaluation']['published_at']}] "
+                            f"completed {submission_id} round={round_id}\n"
+                        )
         except Exception as e:
             ts = time.strftime("%Y-%m-%dT%H:%M:%S")
             try:
@@ -403,6 +613,7 @@ def run_agent(
     api_proxy = None
     install_parts: list[str] = []
     auto_eval_stop = None
+    auto_eval_thread = None
     live_status_stop = None
     live_status_thread = None
 
@@ -597,6 +808,8 @@ def run_agent(
                         backend, handle, task_spec, host_judge_url,
                         session_token, effective_eval_interval,
                         auto_eval_stop, logger, log_dir,
+                        bool(getattr(agent, "install_goal_plus_bridge", False)),
+                        env.get(GOAL_PLUS_EXTERNAL_EVIDENCE_ENV),
                     ),
                     daemon=True,
                 )
@@ -865,6 +1078,8 @@ def run_agent(
         # 7. Stop auto-eval thread before extracting final archive
         if auto_eval_stop is not None:
             auto_eval_stop.set()
+        if auto_eval_thread is not None:
+            auto_eval_thread.join(timeout=10)
             logger.info("Auto-eval thread stopped")
 
         if live_status_stop is not None:
@@ -881,7 +1096,12 @@ def run_agent(
 
         # 8. Extract final archive (tar of submit_paths)
         try:
-            final_archive = _extract_archive_from_container(backend, handle, task_spec)
+            final_archive = _extract_final_archive_from_container(
+                backend,
+                handle,
+                task_spec,
+                bool(getattr(agent, "install_goal_plus_bridge", False)),
+            )
             (log_dir / "final_archive.tar.gz").write_bytes(final_archive)
             logger.info(f"Final archive: {len(final_archive)} bytes")
         except Exception as e:
@@ -1051,6 +1271,8 @@ def run_agent(
         # Stop auto-eval thread
         if auto_eval_stop is not None:
             auto_eval_stop.set()
+        if auto_eval_thread is not None:
+            auto_eval_thread.join(timeout=10)
         if live_status_stop is not None:
             live_status_stop.set()
 
@@ -1058,7 +1280,12 @@ def run_agent(
         interrupted_archive = b""
         try:
             if handle is not None:
-                interrupted_archive = _extract_archive_from_container(backend, handle, task_spec)
+                interrupted_archive = _extract_final_archive_from_container(
+                    backend,
+                    handle,
+                    task_spec,
+                    bool(getattr(agent, "install_goal_plus_bridge", False)),
+                )
                 (log_dir / "final_archive.tar.gz").write_bytes(interrupted_archive)
                 logger.info(f"Final archive (interrupted): {len(interrupted_archive)} bytes")
         except Exception:
@@ -1148,6 +1375,10 @@ def run_agent(
             resume_count=locals().get("resume_count", 0),
         )
     finally:
+        if auto_eval_stop is not None:
+            auto_eval_stop.set()
+        if auto_eval_thread is not None:
+            auto_eval_thread.join(timeout=10)
         if live_status_stop is not None:
             live_status_stop.set()
         if live_status_thread is not None:

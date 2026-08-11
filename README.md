@@ -43,6 +43,38 @@ Analyzing ~38,000 hours of agent interaction on all 134 tasks, we find that **pe
   <img src="assets/fig_full_136_curve_fit_side_by_side.png" alt="Log-sigmoid scaling fit across 134 tasks" width="800">
 </p>
 
+## Fork Maintenance Notes
+
+This `ck0123/EdgeBench` fork carries integration and correctness patches beyond the
+ByteDance-Seed upstream. The committed fork history rebases cleanly onto upstream
+`main` at `a87350ab80eeb320b13cb71d1b0c3ffcc20a670f` as of 2026-08-11.
+
+- **Partial-pass selection:** upstream `pass_rate_first` only compared continuous
+  scores after both submissions reached a `1.0` pass rate. This fork orders
+  submissions lexicographically by pass rate and then by the task's score direction,
+  so two `0.8` submissions can still select the better continuous score.
+- **Known immutable Judge issue:**
+  `order_addition_permutation_optimization` dataset revisions
+  `47846a4c3669ad447e0ea984833b0d352460c5f9` and
+  `6cc5a7f1b3288ce52484ad828177b8cc86b05b75` both reference Judge tag
+  `f6f385925889`. Image ID
+  `sha256:97b871cd558d3e7eacc22f5a85ac50a85ffe2e7333512de8cfdf3fc2cadd4f09`
+  (mirror manifest digest
+  `sha256:6d1a1506f52a5cc7c95680c6df7cd72cb95f81fa236b9794aa507490b947fbd8`)
+  expects score-helper SHA256 `3023b9a4...` but contains `337837af...`.
+  The Judge therefore fails its own integrity test. A corrected upstream Judge tag
+  and dataset revision are required; do not retag a locally patched image as the
+  published tag.
+- **API-only Agent networking:** the bench-goal-plus integration runs task agents
+  with public Internet disabled and allowlists only the per-cell Judge plus every
+  resolved main, worker, and evidence-annotation LLM API endpoint. Missing endpoint
+  metadata or an unavailable isolation mechanism fails closed instead of enabling
+  unrestricted network access.
+
+These notes qualify results produced by this fork; they do not alter the official
+leaderboard protocol or claim that fork-specific Agent methods are directly
+comparable with the published runs.
+
 ## Leaderboard
 
 ### Full Benchmark (134 tasks)

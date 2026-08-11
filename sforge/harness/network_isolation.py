@@ -275,39 +275,40 @@ def check_iptables_permission() -> bool:
 
 def build_allowed_endpoints(
     judge_url: str,
-    api_url: str | None,
+    api_urls: list[str],
     gateway_ip: str,
     logger: logging.Logger,
 ) -> list[AllowedEndpoint]:
-    """Build the whitelist of TCP endpoints from judge + API URLs."""
+    """Build a deduplicated whitelist from the Judge and LLM API URLs."""
     endpoints: list[AllowedEndpoint] = []
 
-    parsed = urlparse(judge_url)
-    judge_host = parsed.hostname or ""
-    judge_port = parsed.port or (443 if parsed.scheme == "https" else 80)
-    if judge_host == "host.docker.internal":
-        endpoints.append(AllowedEndpoint(ip=gateway_ip, port=judge_port))
-    elif is_ip_address(judge_host):
-        endpoints.append(AllowedEndpoint(ip=judge_host, port=judge_port))
-    else:
-        for ip in resolve_hostname(judge_host, logger):
-            endpoints.append(AllowedEndpoint(ip=ip, port=judge_port, hostname=judge_host))
-
-    if api_url:
-        parsed_api = urlparse(api_url)
-        api_host = parsed_api.hostname or ""
-        api_port = parsed_api.port or (443 if parsed_api.scheme == "https" else 80)
-        if api_host == "host.docker.internal":
-            endpoints.append(AllowedEndpoint(ip=gateway_ip, port=api_port))
-        elif is_ip_address(api_host):
-            endpoints.append(AllowedEndpoint(ip=api_host, port=api_port))
+    def add_url(url: str, *, label: str) -> None:
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise RuntimeError(f"Invalid {label} URL for network isolation: {url!r}")
+        if parsed.username is not None or parsed.password is not None:
+            raise RuntimeError(f"{label} URL must not contain credentials")
+        try:
+            port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        except ValueError as exc:
+            raise RuntimeError(f"Invalid {label} URL port: {url!r}") from exc
+        host = parsed.hostname
+        if host == "host.docker.internal":
+            endpoints.append(AllowedEndpoint(ip=gateway_ip, port=port))
+        elif is_ip_address(host):
+            endpoints.append(AllowedEndpoint(ip=host, port=port))
         else:
-            for ip in resolve_hostname(api_host, logger):
-                endpoints.append(
-                    AllowedEndpoint(ip=ip, port=api_port, hostname=api_host)
-                )
+            for ip in resolve_hostname(host, logger):
+                endpoints.append(AllowedEndpoint(ip=ip, port=port, hostname=host))
 
-    return endpoints
+    add_url(judge_url, label="Judge")
+    for api_url in api_urls:
+        add_url(api_url, label="LLM API")
+
+    unique: dict[tuple[str, int], AllowedEndpoint] = {}
+    for endpoint in endpoints:
+        unique.setdefault((endpoint.ip, endpoint.port), endpoint)
+    return list(unique.values())
 
 
 def _remove_jumps_by_grep(

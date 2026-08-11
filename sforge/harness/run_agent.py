@@ -734,8 +734,21 @@ def run_agent(
                     "Ensure passwordless sudo is configured for iptables."
                 )
 
-            api_url = config.agent_api_base_url or agent.default_api_base_url
-            if api_url:
+            api_urls = list(
+                dict.fromkeys(
+                    url
+                    for url in (
+                        config.agent_api_base_url or agent.default_api_base_url,
+                        *config.agent_api_base_urls,
+                    )
+                    if url
+                )
+            )
+            if not api_urls:
+                raise RuntimeError(
+                    "Network isolation requires at least one explicit LLM API endpoint"
+                )
+            for api_url in api_urls:
                 api_host = urlparse(api_url).hostname or ""
                 if api_host and api_host != "host.docker.internal" and not is_ip_address(api_host):
                     resolved_ips = resolve_hostname(api_host, logger)
@@ -853,9 +866,8 @@ def run_agent(
                     "Cannot determine gateway IP for network isolation"
                 )
 
-            effective_api_url = config.agent_api_base_url or agent.default_api_base_url
             endpoints = build_allowed_endpoints(
-                judge_url, effective_api_url, gateway_ip, logger,
+                judge_url, api_urls, gateway_ip, logger,
             )
             net_isolation = backend.create_network_isolation(handle, endpoints, logger)
             net_isolation.apply()

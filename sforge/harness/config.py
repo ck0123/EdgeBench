@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass, field, fields
 from pathlib import Path
@@ -41,6 +42,7 @@ class SForgeConfig:
     # Agent configuration
     agent_api_key: str | None = None
     agent_api_base_url: str | None = None
+    agent_api_base_urls: list[str] = field(default_factory=list)
     agent_model: str | None = None
     agent_timeout: int | None = None
     agent_extra_env: dict[str, str] = field(default_factory=dict)
@@ -130,6 +132,20 @@ def load_config(cli_overrides: dict | None = None) -> SForgeConfig:
     # SFORGE_CLAUDE_CACHE_OPT: truthy value enables cache optimization
     if os.environ.get("SFORGE_CLAUDE_CACHE_OPT", "").strip() not in ("", "0", "false", "no"):
         config.claude_cache_opt = True
+
+    api_base_urls_json = os.environ.get("SFORGE_AGENT_API_BASE_URLS")
+    if api_base_urls_json:
+        try:
+            api_base_urls = json.loads(api_base_urls_json)
+        except json.JSONDecodeError as exc:
+            raise ValueError("SFORGE_AGENT_API_BASE_URLS must be a JSON array") from exc
+        if not isinstance(api_base_urls, list) or any(
+            not isinstance(url, str) or not url.strip() for url in api_base_urls
+        ):
+            raise ValueError(
+                "SFORGE_AGENT_API_BASE_URLS must be a JSON array of non-empty strings"
+            )
+        config.agent_api_base_urls = list(dict.fromkeys(api_base_urls))
 
     # Parse SFORGE_AGENT_EXTRA_ENV: "KEY1=VAL1,KEY2=VAL2"
     extra_env_str = os.environ.get("SFORGE_AGENT_EXTRA_ENV", "")

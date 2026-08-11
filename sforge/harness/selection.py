@@ -49,31 +49,37 @@ def _is_better_score(new: float, old: float | None, direction: str) -> bool:
 
 
 def _pass_rate_first(entries: list[dict], score_direction: str) -> dict:
-    """Current legacy logic: higher pass_rate wins; at 100%, compare score."""
+    """Select lexicographically by pass rate, then by score."""
     best_score: float | None = None
     best_pass_rate: float = 0.0
     best_round: str = ""
+    have_best = False
 
     for e in _completed_submissions(entries):
         pr = e.get("pass_rate", 0.0) or 0.0
         s = e.get("score") if e.get("score") is not None else e.get("max_score")
         is_new_best = False
 
-        if pr < 1.0 or best_pass_rate < 1.0:
-            if pr > best_pass_rate:
-                best_pass_rate = pr
-                best_score = s if s is not None else pr
-                is_new_best = True
-        else:
-            if s is not None and _is_better_score(s, best_score, score_direction):
-                best_score = s
-                is_new_best = True
+        if not have_best or pr > best_pass_rate:
+            best_pass_rate = pr
+            best_score = s
+            is_new_best = True
+        elif (
+            pr == best_pass_rate
+            and s is not None
+            and _is_better_score(s, best_score, score_direction)
+        ):
+            best_score = s
+            is_new_best = True
 
         if is_new_best:
             best_round = e.get("round", "")
+            have_best = True
 
     return {
-        "best_score": best_score,
+        "best_score": (
+            best_score if best_score is not None else best_pass_rate if have_best else None
+        ),
         "best_pass_rate": best_pass_rate,
         "best_round": best_round,
         "best_valid": True,

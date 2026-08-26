@@ -56,7 +56,21 @@ CODEX_DIR="$TASK_ROOT/.codex"
 mkdir -p "$CODEX_DIR/skills" "$CODEX_DIR/agents" {GOAL_PLUS_STATE_DIR}
 cp {GOAL_PLUS_CONTAINER_DIR}/.codex/config.example.toml "$CODEX_DIR/config.toml"
 sed -i 's|args = \["--root", ".gp"\]|args = ["--root", "{GOAL_PLUS_STATE_DIR}"]|' "$CODEX_DIR/config.toml"
-cp {GOAL_PLUS_CONTAINER_DIR}/.codex/hooks.json "$CODEX_DIR/hooks.json"
+HOOKS_SOURCE=""
+for HOOKS_CANDIDATE in \
+    {GOAL_PLUS_CONTAINER_DIR}/hooks/hooks.json \
+    {GOAL_PLUS_CONTAINER_DIR}/.codex/hooks.example.json \
+    {GOAL_PLUS_CONTAINER_DIR}/.codex/hooks.json; do
+    if [ -s "$HOOKS_CANDIDATE" ]; then
+        HOOKS_SOURCE="$HOOKS_CANDIDATE"
+        break
+    fi
+done
+if [ -z "$HOOKS_SOURCE" ]; then
+    echo "Goal Plus Codex hooks are missing" >&2
+    exit 1
+fi
+cp "$HOOKS_SOURCE" "$CODEX_DIR/hooks.json"
 for SKILL in goal-plus goal-plus-with-final-check search; do
     rm -rf "$CODEX_DIR/skills/$SKILL"
     cp -a "{GOAL_PLUS_CONTAINER_DIR}/.codex/skills/$SKILL" "$CODEX_DIR/skills/$SKILL"

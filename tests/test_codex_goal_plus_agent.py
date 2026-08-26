@@ -66,7 +66,10 @@ def test_codex_goal_plus_installs_shared_runtime_and_codex_assets() -> None:
     assert "codex login status" in commands
     assert "Goal Plus commit:" in commands
     assert "/opt/goal-plus/.codex/config.example.toml" in commands
+    assert "/opt/goal-plus/hooks/hooks.json" in commands
+    assert "/opt/goal-plus/.codex/hooks.example.json" in commands
     assert "/opt/goal-plus/.codex/hooks.json" in commands
+    assert "Goal Plus Codex hooks are missing" in commands
     assert "for SKILL in goal-plus goal-plus-with-final-check search" in commands
     assert "/opt/goal-plus/.codex/skills/$SKILL" in commands
     assert "for AGENT in search_candidate_agent goal_plus_final_checker" in commands

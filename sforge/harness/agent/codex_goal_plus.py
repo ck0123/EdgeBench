@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import logging
+import shlex
 from pathlib import Path
 
 from sforge.harness.agent.codex import CodexAgent, _enable_codex_hooks
@@ -40,8 +41,21 @@ from sforge.harness.agent.goal_plus_runtime import (
 from sforge.harness.backend import ContainerBackend, ContainerHandle
 
 
+CODEX_GOAL_PLUS_MCP_OVERRIDES = (
+    'mcp_servers.goal-plus.command="goal-plus"',
+    f'mcp_servers.goal-plus.args=["--root", "{GOAL_PLUS_STATE_DIR}"]',
+    "mcp_servers.goal-plus.startup_timeout_sec=30",
+    "mcp_servers.goal-plus.tool_timeout_sec=300",
+    "mcp_servers.goal-plus.enabled=true",
+    'mcp_servers.goal-plus.default_tools_approval_mode="approve"',
+)
+CODEX_GOAL_PLUS_MCP_FLAGS = " ".join(
+    f"-c {shlex.quote(value)}" for value in CODEX_GOAL_PLUS_MCP_OVERRIDES
+)
+
+
 class CodexGoalPlusAgent(CodexAgent):
-    """Run the normal EdgeBench prompt through Codex's Goal Plus skill."""
+    """Run Goal Plus through Codex's exact host command and project hooks."""
 
     name = "codex-goal-plus"
     install_goal_plus_bridge = True
@@ -56,7 +70,18 @@ CODEX_DIR="$TASK_ROOT/.codex"
 mkdir -p "$CODEX_DIR/skills" "$CODEX_DIR/agents" {GOAL_PLUS_STATE_DIR}
 cp {GOAL_PLUS_CONTAINER_DIR}/.codex/config.example.toml "$CODEX_DIR/config.toml"
 sed -i 's|args = \["--root", ".gp"\]|args = ["--root", "{GOAL_PLUS_STATE_DIR}"]|' "$CODEX_DIR/config.toml"
-cp {GOAL_PLUS_CONTAINER_DIR}/.codex/hooks.json "$CODEX_DIR/hooks.json"
+HOOK_SOURCE=""
+for CANDIDATE in \
+    {GOAL_PLUS_CONTAINER_DIR}/hooks/hooks.json \
+    {GOAL_PLUS_CONTAINER_DIR}/.codex/hooks.example.json \
+    {GOAL_PLUS_CONTAINER_DIR}/.codex/hooks.json; do
+    if [ -s "$CANDIDATE" ]; then
+        HOOK_SOURCE="$CANDIDATE"
+        break
+    fi
+done
+test -n "$HOOK_SOURCE"
+cp "$HOOK_SOURCE" "$CODEX_DIR/hooks.json"
 for SKILL in goal-plus goal-plus-with-final-check search; do
     rm -rf "$CODEX_DIR/skills/$SKILL"
     cp -a "{GOAL_PLUS_CONTAINER_DIR}/.codex/skills/$SKILL" "$CODEX_DIR/skills/$SKILL"
@@ -67,6 +92,7 @@ done
 test -s "$CODEX_DIR/config.toml"
 test -s "$CODEX_DIR/hooks.json"
 test -s "$CODEX_DIR/skills/goal-plus/SKILL.md"
+test -s "$CODEX_DIR/skills/goal-plus/agents/openai.yaml"
 test -s "$CODEX_DIR/skills/search/SKILL.md"
 test -s "$CODEX_DIR/agents/search_candidate_agent.toml"
 grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"''',
@@ -75,7 +101,8 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         'export GOAL_PLUS_OUTER_DEADLINE_AT="$SFORGE_AGENT_DEADLINE"; '
         'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
         'HARD_REMAINING=$((SFORGE_AGENT_HARD_DEADLINE - $(date +%s))); '
-        'exec codex exec --json --dangerously-bypass-approvals-and-sandbox '
+        f'exec codex exec --disable plugins {CODEX_GOAL_PLUS_MCP_FLAGS} '
+        '--json --dangerously-bypass-approvals-and-sandbox '
         '"\\$goal-plus mode=autonomous $(cat {prompt_file})\n\n'
         'Use the Goal Plus framework to perform deep search optimization for this task. '
         'For the initial frozen SearchSpec, set strategy.worker_host to codex and '
@@ -118,27 +145,11 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         'HARD_REMAINING=$((SFORGE_AGENT_HARD_DEADLINE - $(date +%s))); '
         'SYNC_OUTPUT=$(sforge-goal-plus-submit --details --if-new 2>&1); '
         'SYNC_STATUS=$?; '
-        'exec codex exec --json resume --last --dangerously-bypass-approvals-and-sandbox '
-        '"Continue the active Goal Plus task. Before this resume, the EdgeBench '
-        'Goal Plus promotion bridge returned exit status ${SYNC_STATUS}:\n'
-        '${SYNC_OUTPUT}\n\nThe total exploration time budget is '
-        '${SFORGE_AGENT_TOTAL_BUDGET_SECONDS} seconds; its cutoff is Unix timestamp '
-        '${SFORGE_AGENT_DEADLINE}, and ${REMAINING} exploration seconds remain. '
-        'The finalization-only hard deadline is ${SFORGE_AGENT_HARD_DEADLINE}, with '
-        '${HARD_REMAINING} seconds remaining. Once the exploration cutoff is reached, '
-        'do not create a new Search run or launch/continue a worker; only finish the '
-        'Judge, result recording, raw-goal audit, terminal status, and final report. '
-        'Restore the durable Goal Plus and Search state, then continue the Codex '
-        'rolling worker pool. If the initial SearchSpec has not been frozen yet, '
-        'set strategy.worker_host to codex and budget.max_parallel to '
-        '__GOAL_PLUS_PARALLEL_NUM__; omit deprecated budget.max_candidates. '
-        'max_parallel is the single EdgeBench K value. Set '
-        'strategy.worker_budget to {\"max_runtime_seconds\": '
-        '__GOAL_PLUS_WORKER_RUNTIME_SECONDS__, \"on_exceed\": \"interrupt\"} '
-        'without a turn limit. After every '
-        'search_promote, run sforge-goal-plus-submit --details from the outer/main '
-        'session and require a successful Judge result before recording or '
-        'completing the search."'
+        'printf "%s\\n%s\\n" "$SYNC_STATUS" "$SYNC_OUTPUT" '
+        f'>> {GOAL_PLUS_STATE_DIR}/edgebench-resume-sync.log; '
+        f'exec codex exec --disable plugins {CODEX_GOAL_PLUS_MCP_FLAGS} '
+        '--json resume --last --dangerously-bypass-approvals-and-sandbox '
+        '"\\$goal-plus resume"'
     )
 
     def format_run_cmd(

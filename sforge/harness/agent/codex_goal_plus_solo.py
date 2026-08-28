@@ -16,7 +16,10 @@
 
 from __future__ import annotations
 
-from sforge.harness.agent.codex_goal_plus import CodexGoalPlusAgent
+from sforge.harness.agent.codex_goal_plus import (
+    CODEX_GOAL_PLUS_MCP_FLAGS,
+    CodexGoalPlusAgent,
+)
 
 
 class CodexGoalPlusSoloAgent(CodexGoalPlusAgent):
@@ -26,7 +29,8 @@ class CodexGoalPlusSoloAgent(CodexGoalPlusAgent):
     run_cmd = (
         'export GOAL_PLUS_OUTER_DEADLINE_AT="$SFORGE_AGENT_DEADLINE"; '
         'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
-        'exec codex exec --json --dangerously-bypass-approvals-and-sandbox '
+        f'exec codex exec --disable plugins {CODEX_GOAL_PLUS_MCP_FLAGS} '
+        '--json --dangerously-bypass-approvals-and-sandbox '
         '"\\$goal-plus mode=autonomous $(cat {prompt_file})\n\n'
         'Run this as a controlled single-worker AutoResearch experiment. Freeze '
         'exactly one SearchSpec with strategy.worker_host=codex, '
@@ -64,18 +68,9 @@ class CodexGoalPlusSoloAgent(CodexGoalPlusAgent):
         'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
         'SYNC_OUTPUT=$(sforge-goal-plus-submit --details --if-new 2>&1); '
         'SYNC_STATUS=$?; '
-        'exec codex exec --json resume --last --dangerously-bypass-approvals-and-sandbox '
-        '"Resume the controlled single-worker Goal Plus experiment. The promotion '
-        'bridge preflight returned exit status ${SYNC_STATUS}:\n${SYNC_OUTPUT}\n\n'
-        'Keep the frozen contract at worker_host=codex, max_parallel=1, omit '
-        'deprecated max_candidates, and use a single 7200-second worker lease without a turn '
-        'limit. Restore and wait for the already-created worker/session. Do not '
-        'spawn, steer, message, redispatch, or continue a worker, and do not make '
-        'optimization judgments or edit solution.py in the main workspace. If no '
-        'worker was ever created because setup did not complete, create exactly '
-        'one with the original directive and then wait. After the sole worker has '
-        'finished, mechanically select its best valid verifier iteration, promote '
-        'it, and run sforge-goal-plus-submit --details from this outer session. '
-        'The outer hard deadline is ${SFORGE_AGENT_DEADLINE}; ${REMAINING} seconds '
-        'remain."'
+        'printf "%s\\n%s\\n" "$SYNC_STATUS" "$SYNC_OUTPUT" '
+        '>> /home/agent/.goal-plus/edgebench-resume-sync.log; '
+        f'exec codex exec --disable plugins {CODEX_GOAL_PLUS_MCP_FLAGS} '
+        '--json resume --last --dangerously-bypass-approvals-and-sandbox '
+        '"\\$goal-plus resume"'
     )

@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 from sforge.harness.agent.codex_goal_plus import (
+    CODEX_GOAL_PLUS_MCP_OVERRIDES,
     CodexGoalPlusAgent,
 )
 from sforge.harness.agent.codex_goal_plus_solo import CodexGoalPlusSoloAgent
@@ -66,14 +67,29 @@ def test_codex_goal_plus_installs_shared_runtime_and_codex_assets() -> None:
     assert "codex login status" in commands
     assert "Goal Plus commit:" in commands
     assert "/opt/goal-plus/.codex/config.example.toml" in commands
+    assert "/opt/goal-plus/hooks/hooks.json" in commands
+    assert "/opt/goal-plus/.codex/hooks.example.json" in commands
     assert "/opt/goal-plus/.codex/hooks.json" in commands
     assert "for SKILL in goal-plus goal-plus-with-final-check search" in commands
     assert "/opt/goal-plus/.codex/skills/$SKILL" in commands
+    assert "/skills/goal-plus/agents/openai.yaml" in commands
     assert "for AGENT in search_candidate_agent goal_plus_final_checker" in commands
     assert "/opt/goal-plus/.codex/agents/$AGENT.toml" in commands
     assert 'args = ["--root", "/home/agent/.goal-plus"]' in commands
     assert "/opt/goal-plus/.pi/extensions/goal-plus.ts" not in commands
     assert "Using controller-provided Goal Plus source" in commands
+    assert "install_codex_plugin.py" not in commands
+
+
+def test_codex_goal_plus_uses_explicit_mcp_without_plugin_startup() -> None:
+    overrides = set(CODEX_GOAL_PLUS_MCP_OVERRIDES)
+
+    assert 'mcp_servers.goal-plus.command="goal-plus"' in overrides
+    assert any(value.startswith("mcp_servers.goal-plus.args=") for value in overrides)
+    assert "mcp_servers.goal-plus.startup_timeout_sec=30" in overrides
+    assert "mcp_servers.goal-plus.enabled=true" in overrides
+    for template in (CodexGoalPlusAgent.run_cmd, CodexGoalPlusAgent.resume_cmd):
+        assert "--disable plugins" in template
 
 
 def test_goal_plus_hosts_share_runtime_bootstrap_commands() -> None:
@@ -124,13 +140,16 @@ def test_codex_goal_plus_run_and_resume_commands() -> None:
     assert '"max_turns"' not in run_cmd
     assert "sforge-goal-plus-submit --details" in run_cmd
     assert "sforge-goal-plus-submit --details --if-new" in resume_cmd
-    assert "--model gpt-5.5 --json resume --last" in resume_cmd
+    assert "--model gpt-5.5 --disable plugins" in resume_cmd
+    assert "--json resume --last" in resume_cmd
     assert "--json" in resume_cmd
     assert "SFORGE_AGENT_FINALIZATION_GRACE_SECONDS" in run_cmd
     assert "SFORGE_AGENT_HARD_DEADLINE" in run_cmd
     assert "After the exploration cutoff" in run_cmd
-    assert "finalization-only hard deadline" in resume_cmd
-    assert "${SYNC_STATUS}" in resume_cmd
+    assert "edgebench-resume-sync.log" in resume_cmd
+    assert '"\\$goal-plus resume"' in resume_cmd
+    assert "Continue the active Goal Plus task" not in resume_cmd
+    assert "$SYNC_STATUS" in resume_cmd
     assert "${{SYNC_STATUS}}" not in resume_cmd
     assert (
         agent.get_finalization_grace_seconds()
@@ -155,8 +174,9 @@ def test_codex_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> No
 
     assert "set budget.max_parallel to 5" in run_cmd
     assert '"max_runtime_seconds": 900' in run_cmd
-    assert "budget.max_parallel to 5" in resume_cmd
-    assert '"max_runtime_seconds": 900' in resume_cmd
+    assert '"\\$goal-plus resume"' in resume_cmd
+    assert "budget.max_parallel to 5" not in resume_cmd
+    assert '"max_runtime_seconds": 900' not in resume_cmd
     assert agent.get_finalization_grace_seconds() == 180
 
 
@@ -410,10 +430,9 @@ def test_codex_goal_plus_solo_enforces_one_long_lived_worker() -> None:
     assert "omit deprecated budget.max_candidates" in run_cmd
     assert '\"max_runtime_seconds\":7200' in run_cmd
     assert "Do not set max_turns" in run_cmd
-    assert "do not make optimization judgments" in resume_cmd
-    assert "max_parallel=1" in resume_cmd
-    assert "omit deprecated max_candidates" in resume_cmd
-    assert "7200-second worker lease" in resume_cmd
+    assert "--disable plugins" in resume_cmd
+    assert '"\\$goal-plus resume"' in resume_cmd
+    assert "Resume the controlled single-worker" not in resume_cmd
 
 
 def test_codex_goal_plus_sets_shared_state_environment() -> None:

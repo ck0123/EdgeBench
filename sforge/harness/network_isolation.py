@@ -30,10 +30,14 @@ import logging
 import re
 import socket
 import subprocess
+import sys
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
 import docker
+
+
+DOCKER_VM_IPTABLES_HELPER_IMAGE = "ubuntu:22.04"
 
 
 @dataclass
@@ -226,8 +230,36 @@ class NetworkIsolation:
 # ---------------------------------------------------------------------------
 
 
+def _iptables_command(args: list[str], *, v6: bool = False) -> list[str]:
+    program = "ip6tables" if v6 else "iptables"
+    if sys.platform != "darwin":
+        return ["sudo", "-n", program, *args]
+    return [
+        "docker",
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--privileged",
+        "--pid",
+        "host",
+        "--network",
+        "host",
+        "--entrypoint",
+        "/usr/bin/nsenter",
+        DOCKER_VM_IPTABLES_HELPER_IMAGE,
+        "-t",
+        "1",
+        "-m",
+        "-n",
+        "--",
+        program,
+        *args,
+    ]
+
+
 def _iptables(args: list[str], *, v6: bool = False) -> None:
-    cmd = ["sudo", "-n", "ip6tables" if v6 else "iptables"] + args
+    cmd = _iptables_command(args, v6=v6)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         raise RuntimeError(
@@ -237,7 +269,7 @@ def _iptables(args: list[str], *, v6: bool = False) -> None:
 
 
 def _chain_exists(chain: str, *, v6: bool = False) -> bool:
-    cmd = ["sudo", "-n", "ip6tables" if v6 else "iptables", "-L", chain, "-n"]
+    cmd = _iptables_command(["-L", chain, "-n"], v6=v6)
     result = subprocess.run(cmd, capture_output=True, text=True)
     return result.returncode == 0
 
@@ -262,10 +294,10 @@ def resolve_hostname(hostname: str, logger: logging.Logger) -> list[str]:
 
 
 def check_iptables_permission() -> bool:
-    """Check that we can run iptables via passwordless sudo."""
+    """Check host iptables, entering the Docker VM on macOS when needed."""
     try:
         result = subprocess.run(
-            ["sudo", "-n", "iptables", "-L", "INPUT", "-n"],
+            _iptables_command(["-L", "INPUT", "-n"]),
             capture_output=True, text=True, timeout=5,
         )
         return result.returncode == 0
@@ -323,7 +355,7 @@ def _remove_jumps_by_grep(
     """
     for parent in ("DOCKER-USER", "INPUT", "FORWARD"):
         result = subprocess.run(
-            ["sudo", "-n", prog, "-S", parent],
+            _iptables_command(["-S", parent], v6=prog == "ip6tables"),
             capture_output=True, text=True,
         )
         if result.returncode != 0:
@@ -337,7 +369,10 @@ def _remove_jumps_by_grep(
             if delete_args and delete_args[0] == "-A":
                 delete_args[0] = "-D"
             subprocess.run(
-                ["sudo", "-n", prog] + delete_args,
+                _iptables_command(
+                    delete_args,
+                    v6=prog == "ip6tables",
+                ),
                 capture_output=True,
             )
 
@@ -353,7 +388,7 @@ def cleanup_stale_chains(logger: logging.Logger) -> None:
     for v6 in (False, True):
         prog = "ip6tables" if v6 else "iptables"
         result = subprocess.run(
-            ["sudo", "-n", prog, "-L", "-n"],
+            _iptables_command(["-L", "-n"], v6=v6),
             capture_output=True, text=True,
         )
         if result.returncode != 0:
@@ -365,5 +400,11 @@ def cleanup_stale_chains(logger: logging.Logger) -> None:
                 continue
             logger.info(f"Removing stale {prog} chain: {chain}")
             _remove_jumps_by_grep(prog, chain, logger)
-            subprocess.run(["sudo", "-n", prog, "-F", chain], capture_output=True)
-            subprocess.run(["sudo", "-n", prog, "-X", chain], capture_output=True)
+            subprocess.run(
+                _iptables_command(["-F", chain], v6=v6),
+                capture_output=True,
+            )
+            subprocess.run(
+                _iptables_command(["-X", chain], v6=v6),
+                capture_output=True,
+            )

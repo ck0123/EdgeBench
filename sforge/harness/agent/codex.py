@@ -26,7 +26,7 @@ from sforge.harness.agent.base import Agent
 from sforge.harness.backend import ContainerBackend, ContainerHandle
 
 
-CODEX_CLI_VERSION = "0.144.1"
+CODEX_CLI_VERSION = "0.150.1"
 CODEX_PROVIDER_STREAM_IDLE_TIMEOUT_MS = 60_000
 CODEX_PROVIDER_STREAM_MAX_RETRIES = 2
 CODEX_PROVIDER_REQUEST_MAX_RETRIES = 2

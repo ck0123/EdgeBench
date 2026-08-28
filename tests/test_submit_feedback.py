@@ -240,7 +240,7 @@ def test_codex_prepare_container_copies_cached_linux_runtime(
 
         def exec_run(self, handle, command, *, user=None) -> ExecResult:
             self.commands.append((command, user))
-            return ExecResult(output="codex-cli 0.144.1")
+            return ExecResult(output="codex-cli 0.150.1")
 
     backend = FakeBackend()
     agent = CodexAgent(SForgeConfig())

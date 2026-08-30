@@ -20,6 +20,7 @@ from sforge.harness.agent.codex_goal_plus import (
     CODEX_GOAL_PLUS_MCP_FLAGS,
     CodexGoalPlusAgent,
 )
+from sforge.harness.agent.goal_plus_runtime import goal_plus_model_token
 
 
 class CodexGoalPlusSoloAgent(CodexGoalPlusAgent):
@@ -31,10 +32,14 @@ class CodexGoalPlusSoloAgent(CodexGoalPlusAgent):
         'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
         f'exec codex exec --disable plugins {CODEX_GOAL_PLUS_MCP_FLAGS} '
         '--json --dangerously-bypass-approvals-and-sandbox '
-        '"\\$goal-plus mode=autonomous $(cat {prompt_file})\n\n'
+        '"\\$goal-plus mode=autonomous max_parallel=1 '
+        'workspace_backend=git_worktree promotion_mode=artifact_only '
+        'strategy=agent_guided __GOAL_PLUS_SOLO_ROLE_COMMAND_CONFIG__'
+        '$(cat {prompt_file})\n\n'
         'Run this as a controlled single-worker AutoResearch experiment. Freeze '
         'exactly one SearchSpec with strategy.worker_host=codex, '
-        'budget.max_parallel=1, omit deprecated budget.max_candidates, and '
+        'honor the leading typed command config, omit deprecated '
+        'budget.max_candidates, and '
         'strategy.worker_budget={{\"max_runtime_seconds\":7200,'
         '\"on_exceed\":\"interrupt\"}}. Do not set max_turns. Create and '
         'start exactly one candidate worker. Its candidate directive must tell it '
@@ -74,3 +79,37 @@ class CodexGoalPlusSoloAgent(CodexGoalPlusAgent):
         '--json resume --last --dangerously-bypass-approvals-and-sandbox '
         '"\\$goal-plus resume"'
     )
+
+    def format_run_cmd(
+        self,
+        prompt_path: str,
+        *,
+        model: str | None = None,
+        cwd: str = "",
+        internet: bool = True,
+        resume: bool = False,
+    ) -> str:
+        cmd = super().format_run_cmd(
+            prompt_path,
+            model=model,
+            cwd=cwd,
+            internet=internet,
+            resume=resume,
+        )
+        worker_model = goal_plus_model_token(
+            model or self._config.agent_model or self.default_model,
+            "Goal Plus Codex solo worker model",
+        )
+        role_config = f"workers={worker_model}*1"
+        annotator_model = self._config.agent_extra_env.get(
+            "GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL"
+        )
+        if annotator_model:
+            role_config += " annotator=" + goal_plus_model_token(
+                annotator_model,
+                "Goal Plus Codex solo annotator model",
+            )
+        return cmd.replace(
+            "__GOAL_PLUS_SOLO_ROLE_COMMAND_CONFIG__",
+            role_config + " ",
+        )

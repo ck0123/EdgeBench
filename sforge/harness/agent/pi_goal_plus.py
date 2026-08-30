@@ -37,6 +37,7 @@ from sforge.harness.agent.goal_plus_runtime import (
     GOAL_PLUS_WORKER_MIN_RUNTIME_ENV,
     collect_goal_plus_live_status,
     collect_goal_plus_artifacts,
+    goal_plus_model_token,
     goal_plus_should_resume_after_exit,
     goal_plus_runtime_install_cmds,
     nonnegative_int_extra_env,
@@ -74,12 +75,16 @@ mkdir -p /home/agent/.goal-plus''',
         '-e /opt/goal-plus/.pi/extensions/goal-plus.ts '
         '--provider openai-codex --model "$PI_MODEL" '
         '--thinking "$SFORGE_PI_REASONING_EFFORT" '
-        '"/goal-plus $(cat {prompt_file})\n\n'
+        '"/goal-plus mode=autonomous max_parallel=__GOAL_PLUS_PARALLEL_NUM__ '
+        'workspace_backend=git_worktree promotion_mode=artifact_only '
+        'strategy=agent_guided __GOAL_PLUS_ROLE_COMMAND_CONFIG__'
+        '$(cat {prompt_file})\n\n'
         'Use the Goal Plus framework to perform deep search optimization for this task.\n'
         'For the initial frozen SearchSpec, set strategy.worker_host to pi and '
-        'set budget.max_parallel to __GOAL_PLUS_PARALLEL_NUM__ and omit the '
-        'deprecated budget.max_candidates field. max_parallel is the single '
-        'EdgeBench K value. Set strategy.worker_budget to '
+        'omit the deprecated budget.max_candidates field. The leading typed '
+        'command config is authoritative for max_parallel (the single EdgeBench K), '
+        'workspace backend, promotion mode, strategy, and role models. Set '
+        'strategy.worker_budget to '
         '__GOAL_PLUS_WORKER_BUDGET__, and '
         'strategy.config.reserve_closeout_seconds to '
         '__GOAL_PLUS_CLOSEOUT_RESERVE_SECONDS__; do not prescribe a turn limit. This is the '
@@ -102,7 +107,8 @@ mkdir -p /home/agent/.goal-plus''',
         'each rolling-pool decision and reserve time for final verification, '
         'selection, promotion, and Judge feedback. No round count is prescribed.\n\n'
         'EdgeBench integration requirement: Goal Plus candidate workspaces are '
-        'isolated from the main task workspace. After every search_promote call, '
+        'isolated from the main task workspace and promotion_mode is artifact_only. '
+        'After every search_promote call, '
         'the outer/main Pi session must run sforge-goal-plus-submit --details. '
         'That command atomically copies the selected candidate submitted files '
         'into the main workspace, verifies their hashes, then synchronously calls '
@@ -201,23 +207,48 @@ mkdir -p /home/agent/.goal-plus''',
         if min_verifier_runs:
             worker_budget["min_verifier_runs"] = min_verifier_runs
         worker_budget_text = json.dumps(worker_budget)
+        explicit_worker_model = self._config.agent_extra_env.get(
+            "SFORGE_GOAL_PLUS_WORKER_MODEL"
+        )
+        effective_model = (
+            explicit_worker_model
+            or model
+            or self._config.agent_model
+            or self.default_model
+        )
+        if effective_model and "/" not in effective_model:
+            effective_model = f"openai-codex/{effective_model}"
+        worker_model = goal_plus_model_token(
+            effective_model,
+            "Goal Plus Pi worker model",
+        )
+        role_command_config = f"workers={worker_model}*{parallel_num}"
+        annotator_model = self._config.agent_extra_env.get(
+            "GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL"
+        )
+        if annotator_model:
+            role_command_config += " annotator=" + goal_plus_model_token(
+                annotator_model,
+                "Goal Plus Pi annotator model",
+            )
+        role_command_config += " "
         role_model_config = ""
-        if self._config.agent_extra_env.get("SFORGE_GOAL_PLUS_WORKER_MODEL"):
+        if explicit_worker_model:
             role_model_config = (
-                "Freeze strategy.worker_launch.model to "
-                "${SFORGE_GOAL_PLUS_WORKER_MODEL} and its reasoning_effort to "
+                "The typed command config freezes the worker and annotator model "
+                "roles. Freeze strategy.worker_launch.reasoning_effort to "
                 "${SFORGE_GOAL_PLUS_WORKER_REASONING_EFFORT}. Freeze "
-                "strategy.models to one entry using that model, count "
-                "${SFORGE_GOAL_PLUS_PARALLEL_NUM}, and the same reasoning effort. "
-                "Freeze strategy.evidence_annotator.model to "
-                "${GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL}, derive pi_provider from "
-                "that qualified model reference, set reasoning_effort to "
+                "strategy.models to one entry with the same reasoning effort. "
+                "For strategy.evidence_annotator derive pi_provider from its typed "
+                "qualified model reference, set reasoning_effort to "
                 "${GOAL_PLUS_EVIDENCE_ANNOTATOR_REASONING_EFFORT}, and set "
                 "timeout_seconds to "
                 "${SFORGE_GOAL_PLUS_EVIDENCE_ANNOTATOR_TIMEOUT_SECONDS}. "
             )
         return cmd.replace(
             "__GOAL_PLUS_PARALLEL_NUM__", str(parallel_num)
+        ).replace(
+            "__GOAL_PLUS_ROLE_COMMAND_CONFIG__", role_command_config
         ).replace(
             "__GOAL_PLUS_WORKER_BUDGET__", worker_budget_text
         ).replace(

@@ -129,7 +129,11 @@ def test_goal_plus_provider_uses_selected_model_for_outer_and_workers(
 
     assert '--provider "$PI_PROVIDER" --model "$PI_MODEL"' in command
     assert "--provider openai-codex" not in command
-    assert "budget.max_parallel to 2" in command
+    assert (
+        "/goal-plus mode=autonomous max_parallel=2 "
+        "workspace_backend=git_worktree promotion_mode=artifact_only "
+        "strategy=agent_guided workers=glm-proxy/GLM-5.2*2 "
+    ) in command
     assert "-e /opt/goal-plus/.pi/extensions/goal-plus.ts" in command
     assert env["PI_PROVIDER"] == "glm-proxy"
     assert env["PI_MODEL"] == "GLM-5.2"
@@ -183,10 +187,10 @@ def test_goal_plus_provider_uses_independent_worker_and_annotation_models(
     assert env["PI_MODEL"] == "gpt-5.6-terra"
     assert env["GOAL_PLUS_PI_MODEL"] == "bench-openai/gpt-5.6-luna"
     assert env["OPENAI_API_KEY"] == "terra-key"
+    assert "workers=bench-openai/gpt-5.6-luna*4" in command
+    assert "annotator=bench-openai/gpt-5.6-terra" in command
     assert "strategy.models" in command
-    assert "SFORGE_GOAL_PLUS_WORKER_MODEL" in command
     assert "strategy.evidence_annotator" in command
-    assert "GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL" in command
 
 
 def test_goal_plus_provider_does_not_overwrite_copied_models_registry() -> None:

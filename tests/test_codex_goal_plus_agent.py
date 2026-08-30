@@ -131,9 +131,14 @@ def test_codex_goal_plus_run_and_resume_commands() -> None:
     assert "--dangerously-bypass-hook-trust" in resume_cmd
     assert "codex exec --dangerously-bypass-hook-trust -c" in run_cmd
     assert "--json" in run_cmd
-    assert "\\$goal-plus mode=autonomous" in run_cmd
+    assert (
+        "\\$goal-plus mode=autonomous max_parallel=3 "
+        "workspace_backend=git_worktree promotion_mode=artifact_only "
+        "strategy=agent_guided workers=gpt-5.5*3 "
+    ) in run_cmd
+    assert " -- " not in run_cmd.split("$(cat", 1)[0]
     assert "strategy.worker_host to codex" in run_cmd
-    assert "set budget.max_parallel to 3" in run_cmd
+    assert "leading typed command config is authoritative" in run_cmd
     assert "omit the deprecated budget.max_candidates field" in run_cmd
     assert '"max_runtime_seconds": 1200' in run_cmd
     assert "do not prescribe a turn limit" in run_cmd
@@ -172,7 +177,8 @@ def test_codex_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> No
         "/tmp/prompt.md", model="gpt-5.5", resume=True
     )
 
-    assert "set budget.max_parallel to 5" in run_cmd
+    assert "max_parallel=5" in run_cmd
+    assert "workers=gpt-5.5*5" in run_cmd
     assert '"max_runtime_seconds": 900' in run_cmd
     assert '"\\$goal-plus resume"' in resume_cmd
     assert "budget.max_parallel to 5" not in resume_cmd
@@ -200,7 +206,13 @@ def test_pi_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> None:
 
     assert "strategy.worker_host to pi" in run_cmd
     assert '--thinking "$SFORGE_PI_REASONING_EFFORT"' in run_cmd
-    assert "set budget.max_parallel to 4" in run_cmd
+    assert (
+        "/goal-plus mode=autonomous max_parallel=4 "
+        "workspace_backend=git_worktree promotion_mode=artifact_only "
+        "strategy=agent_guided workers=openai-codex/gpt-5.6-sol*4 "
+    ) in run_cmd
+    pi_goal_prefix = run_cmd.split('"/goal-plus ', 1)[1].split("$(cat", 1)[0]
+    assert " -- " not in pi_goal_prefix
     assert '"max_runtime_seconds": 720' in run_cmd
     assert '"min_runtime_seconds": 600' in run_cmd
     assert '"min_verifier_runs": 1' in run_cmd
@@ -426,7 +438,11 @@ def test_codex_goal_plus_solo_enforces_one_long_lived_worker() -> None:
 
     assert "model_reasoning_effort=\"medium\"" in run_cmd
     assert "--model gpt-5.5" in run_cmd
-    assert "budget.max_parallel=1" in run_cmd
+    assert (
+        "\\$goal-plus mode=autonomous max_parallel=1 "
+        "workspace_backend=git_worktree promotion_mode=artifact_only "
+        "strategy=agent_guided workers=gpt-5.5*1 "
+    ) in run_cmd
     assert "omit deprecated budget.max_candidates" in run_cmd
     assert '\"max_runtime_seconds\":7200' in run_cmd
     assert "Do not set max_turns" in run_cmd

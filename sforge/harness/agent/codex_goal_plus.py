@@ -32,6 +32,7 @@ from sforge.harness.agent.goal_plus_runtime import (
     GOAL_PLUS_WORKER_RUNTIME_ENV,
     collect_goal_plus_live_status,
     collect_goal_plus_artifacts,
+    goal_plus_model_token,
     goal_plus_should_resume_after_exit,
     goal_plus_runtime_install_cmds,
     nonnegative_int_extra_env,
@@ -103,12 +104,15 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         'HARD_REMAINING=$((SFORGE_AGENT_HARD_DEADLINE - $(date +%s))); '
         f'exec codex exec --disable plugins {CODEX_GOAL_PLUS_MCP_FLAGS} '
         '--json --dangerously-bypass-approvals-and-sandbox '
-        '"\\$goal-plus mode=autonomous $(cat {prompt_file})\n\n'
+        '"\\$goal-plus mode=autonomous max_parallel=__GOAL_PLUS_PARALLEL_NUM__ '
+        'workspace_backend=git_worktree promotion_mode=artifact_only '
+        'strategy=agent_guided __GOAL_PLUS_ROLE_COMMAND_CONFIG__'
+        '$(cat {prompt_file})\n\n'
         'Use the Goal Plus framework to perform deep search optimization for this task. '
         'For the initial frozen SearchSpec, set strategy.worker_host to codex and '
-        'set budget.max_parallel to __GOAL_PLUS_PARALLEL_NUM__ and omit the '
-        'deprecated budget.max_candidates field. max_parallel is the single '
-        'EdgeBench K value. Set '
+        'omit the deprecated budget.max_candidates field. The leading typed '
+        'command config is authoritative for max_parallel (the single EdgeBench K), '
+        'workspace backend, promotion mode, strategy, and role models. Set '
         'strategy.worker_budget to {{\"max_runtime_seconds\": '
         '__GOAL_PLUS_WORKER_RUNTIME_SECONDS__, \"on_exceed\": \"interrupt\"}}; '
         'do not prescribe a turn limit. This is the '
@@ -130,7 +134,8 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         'rolling-pool decision and reserve time for final verification, selection, '
         'promotion, and Judge feedback. No round count is prescribed.\n\n'
         'EdgeBench integration requirement: Goal Plus candidate workspaces are '
-        'isolated from the main task workspace. After every search_promote call, '
+        'isolated from the main task workspace and promotion_mode is artifact_only. '
+        'After every search_promote call, '
         'the outer/main Codex session must run sforge-goal-plus-submit --details. '
         'That command atomically copies the selected candidate submitted files '
         'into the main workspace, verifies their hashes, then synchronously calls '
@@ -178,10 +183,27 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
             GOAL_PLUS_WORKER_RUNTIME_ENV,
             DEFAULT_GOAL_PLUS_WORKER_RUNTIME_SECONDS,
         )
+        effective_model = model or self._config.agent_model or self.default_model
+        worker_model = goal_plus_model_token(
+            effective_model,
+            "Goal Plus Codex worker model",
+        )
+        role_config = f"workers={worker_model}*{parallel_num}"
+        annotator_model = self._config.agent_extra_env.get(
+            "GOAL_PLUS_EVIDENCE_ANNOTATOR_MODEL"
+        )
+        if annotator_model:
+            role_config += " annotator=" + goal_plus_model_token(
+                annotator_model,
+                "Goal Plus Codex annotator model",
+            )
+        role_config += " "
         return cmd.replace(
             "__GOAL_PLUS_PARALLEL_NUM__", str(parallel_num)
         ).replace(
             "__GOAL_PLUS_WORKER_RUNTIME_SECONDS__", str(worker_runtime)
+        ).replace(
+            "__GOAL_PLUS_ROLE_COMMAND_CONFIG__", role_config
         )
 
     def prepare_container(

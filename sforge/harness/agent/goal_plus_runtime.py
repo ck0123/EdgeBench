@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shlex
 from pathlib import Path, PurePosixPath
 
@@ -48,6 +49,16 @@ DEFAULT_GOAL_PLUS_CLOSEOUT_RESERVE_SECONDS = 0
 DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS = 300
 GOAL_PLUS_LIVE_STATUS_FILENAME = "goal-plus-live-status.json"
 GOAL_PLUS_STATUS_PROBE_CONTAINER_PATH = "/opt/sforge-goal-plus-status.py"
+GOAL_PLUS_MODEL_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]*\Z")
+
+
+def goal_plus_model_token(value: str | None, name: str) -> str:
+    """Validate one model reference before embedding it in a host command."""
+
+    normalized = (value or "").strip()
+    if not GOAL_PLUS_MODEL_TOKEN_PATTERN.fullmatch(normalized):
+        raise ValueError(f"{name} must be one safe Goal Plus model token")
+    return normalized
 
 
 def positive_int_extra_env(

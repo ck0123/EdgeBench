@@ -1,23 +1,5 @@
 # EdgeBench Agent Instructions
 
-<!-- codebase-memory-mcp:start -->
-## Codebase Knowledge Graph (codebase-memory-mcp)
-
-This project uses codebase-memory-mcp to maintain a knowledge graph of the codebase.
-Always prefer MCP graph tools over grep, glob, or file search for code discovery.
-
-Priority order:
-
-1. `search_graph` — find functions, classes, routes, and variables by pattern.
-2. `trace_path` — trace who calls a function or what it calls.
-3. `get_code_snippet` — read specific function or class source code.
-4. `query_graph` — run Cypher queries for complex patterns.
-5. `get_architecture` — get a high-level project summary.
-
-Fall back to grep or glob when searching string literals, error messages,
-configuration values, non-code files, or when graph results are insufficient.
-<!-- codebase-memory-mcp:end -->
-
 ## Read this before starting any local agent run
 
 Do not reconstruct the local Docker, proxy, authentication, or timeout setup

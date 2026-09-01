@@ -84,9 +84,11 @@ agent 正式开始前生成，安装环境的时间不计入；启动和每次 r
 这里不额外规定 round 数或按剩余时间划分的阈值；当前初始 SearchSpec 设置
 `max_parallel=3`，一次创建 3 个长期 candidate/subagent；已弃用的 `max_candidates`
 不再写入配置。后续搜索深度和最终验证留时由 Goal Plus 结合剩余时间自主规划。
-若 Pi 提前退出，auto resume 会先同步最新 promotion/Judge
-状态，再通过同一个 session 执行 `Continue working.` 并注入新的剩余时间。SForge
-不使用固定的 20 分钟 segment timeout；只有单 task 的全局 `7200` 秒时限会结束
+若 Pi 提前退出，auto resume 会先同步最新 promotion/Judge 状态，把回执独立写入
+`~/.goal-plus/edgebench/edgebench-resume-sync.log`，再通过 `pi -c` 恢复同一个 native
+session。由于这是一个重新加载 Goal Plus extension 的新 Pi 进程，它的唯一新用户输入必须
+严格等于 `/goal-plus resume`；不能用 `Continue working.` 或把同步回执拼进用户输入。
+SForge 不使用固定的 20 分钟 segment timeout；只有单 task 的全局 `7200` 秒时限会结束
 agent。
 
 ## Promotion 与 Judge 闭环

@@ -125,6 +125,9 @@ def test_goal_plus_provider_uses_selected_model_for_outer_and_workers(
     command = agent.format_run_cmd(
         "/tmp/prompt.md", model="glm-proxy/GLM-5.2"
     )
+    resume_command = agent.format_run_cmd(
+        "/tmp/prompt.md", model="glm-proxy/GLM-5.2", resume=True
+    )
     agent.augment_env(env, "glm-proxy/GLM-5.2")
 
     assert '--provider "$PI_PROVIDER" --model "$PI_MODEL"' in command
@@ -135,6 +138,9 @@ def test_goal_plus_provider_uses_selected_model_for_outer_and_workers(
         "strategy=agent_guided workers=glm-proxy/GLM-5.2*2 "
     ) in command
     assert "-e /opt/goal-plus/.pi/extensions/goal-plus.ts" in command
+    assert '--provider "$PI_PROVIDER" --model "$PI_MODEL"' in resume_command
+    assert resume_command.endswith('"/goal-plus resume"')
+    assert "Continue working" not in resume_command
     assert env["PI_PROVIDER"] == "glm-proxy"
     assert env["PI_MODEL"] == "GLM-5.2"
     assert env["GOAL_PLUS_PI_MODEL"] == "glm-proxy/GLM-5.2"

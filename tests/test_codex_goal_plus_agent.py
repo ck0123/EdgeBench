@@ -218,11 +218,19 @@ def test_pi_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> None:
     assert '"min_verifier_runs": 1' in run_cmd
     assert "reserve_closeout_seconds to 90" in run_cmd
     assert '"max_turns"' not in run_cmd
-    assert "budget.max_parallel to 4" in resume_cmd
-    assert '"max_runtime_seconds": 720' in resume_cmd
-    assert '"min_runtime_seconds": 600' in resume_cmd
-    assert '"min_verifier_runs": 1' in resume_cmd
-    assert "reserve_closeout_seconds to 90" in resume_cmd
+    assert "sforge-goal-plus-submit --details --if-new" in resume_cmd
+    assert "edgebench-resume-sync.log" in resume_cmd
+    assert resume_cmd.endswith('"/goal-plus resume"')
+    assert "Continue working" not in resume_cmd
+    assert "budget.max_parallel to 4" not in resume_cmd
+    assert '"max_runtime_seconds": 720' not in resume_cmd
+    completed = subprocess.run(
+        ["bash", "-n", "-c", resume_cmd],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
     assert "SFORGE_AGENT_FINALIZATION_GRACE_SECONDS" in run_cmd
     assert "SFORGE_AGENT_HARD_DEADLINE" in run_cmd
     assert agent.get_finalization_grace_seconds() == 150

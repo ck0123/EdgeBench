@@ -109,6 +109,9 @@ class PiAgent(Agent):
 cat > ~/.pi/agent/models.json << EOF
 {
   "providers": {
+    "openai-codex": {
+      "baseUrl": "${OPENAI_BASE_URL:-https://chatgpt.com/backend-api}"
+    },
     "sforge-proxy": {
       "baseUrl": "${OPENAI_BASE_URL}",
       "api": "openai-responses",
@@ -131,7 +134,12 @@ cat > ~/.pi/agent/models.json << EOF
   }
 }
 EOF
-chmod 600 ~/.pi/agent/models.json''',
+cat > ~/.pi/agent/settings.json << EOF
+{
+  "transport": "${SFORGE_PI_TRANSPORT:-auto}"
+}
+EOF
+chmod 600 ~/.pi/agent/models.json ~/.pi/agent/settings.json''',
     ]
     run_cmd = (
         'pi -p --mode json --provider openai-codex --model "$PI_MODEL" '
@@ -164,6 +172,16 @@ chmod 600 ~/.pi/agent/models.json''',
             ),
         )
         env.setdefault("SFORGE_PI_REASONING_EFFORT", "medium")
+        configured_base_url = env.get(self.api_base_env or "")
+        if configured_base_url and configured_base_url.rstrip("/") != (
+            self.default_api_base_url or ""
+        ).rstrip("/"):
+            # SForge's exact-target reverse proxy is HTTP/SSE only.  Pi's
+            # openai-codex transport otherwise probes WebSocket first, which
+            # cannot traverse that deliberately narrow proxy.
+            env.setdefault("SFORGE_PI_TRANSPORT", "sse")
+        else:
+            env.setdefault("SFORGE_PI_TRANSPORT", "auto")
 
     def prepare_container(
         self,

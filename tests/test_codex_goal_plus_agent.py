@@ -46,6 +46,26 @@ def test_plain_pi_pins_reasoning_effort() -> None:
     assert env["SFORGE_PI_REASONING_EFFORT"] == "medium"
 
 
+def test_pi_routes_builtin_codex_oauth_through_configured_api_base() -> None:
+    install_command = PiAgent.install_cmds[2]
+    assert '"openai-codex": {' in install_command
+    assert (
+        '"baseUrl": "${OPENAI_BASE_URL:-https://chatgpt.com/backend-api}"'
+        in install_command
+    )
+    assert '"transport": "${SFORGE_PI_TRANSPORT:-auto}"' in install_command
+
+    direct_env = {"OPENAI_BASE_URL": "https://chatgpt.com/backend-api"}
+    PiAgent(SForgeConfig()).augment_env(direct_env, "gpt-5.6-sol")
+    assert direct_env["SFORGE_PI_TRANSPORT"] == "auto"
+
+    proxy_env = {
+        "OPENAI_BASE_URL": "http://host.docker.internal:9090/backend-api"
+    }
+    PiAgent(SForgeConfig()).augment_env(proxy_env, "gpt-5.6-sol")
+    assert proxy_env["SFORGE_PI_TRANSPORT"] == "sse"
+
+
 def test_pi_tracks_latest_package_by_default_and_allows_exact_freeze() -> None:
     install_command = PiAgent.install_cmds[1]
     assert "SFORGE_PI_PACKAGE_VERSION:-latest" in install_command

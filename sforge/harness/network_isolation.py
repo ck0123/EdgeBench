@@ -310,6 +310,8 @@ def build_allowed_endpoints(
     api_urls: list[str],
     gateway_ip: str,
     logger: logging.Logger,
+    *,
+    host_internal_ips: list[str] | None = None,
 ) -> list[AllowedEndpoint]:
     """Build a deduplicated whitelist from the Judge and LLM API URLs."""
     endpoints: list[AllowedEndpoint] = []
@@ -326,7 +328,9 @@ def build_allowed_endpoints(
             raise RuntimeError(f"Invalid {label} URL port: {url!r}") from exc
         host = parsed.hostname
         if host == "host.docker.internal":
-            endpoints.append(AllowedEndpoint(ip=gateway_ip, port=port))
+            for ip in dict.fromkeys([gateway_ip, *(host_internal_ips or [])]):
+                if ip:
+                    endpoints.append(AllowedEndpoint(ip=ip, port=port))
         elif is_ip_address(host):
             endpoints.append(AllowedEndpoint(ip=host, port=port))
         else:

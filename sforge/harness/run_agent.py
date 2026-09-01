@@ -866,8 +866,42 @@ def run_agent(
                     "Cannot determine gateway IP for network isolation"
                 )
 
+            host_internal_ips: list[str] = []
+            if backend.backend_name == "docker" and any(
+                urlparse(url).hostname == "host.docker.internal"
+                for url in (judge_url, *api_urls)
+            ):
+                resolved = backend.exec_run(
+                    handle,
+                    ["getent", "ahostsv4", "host.docker.internal"],
+                )
+                if resolved.exit_code == 0:
+                    host_internal_ips = list(
+                        dict.fromkeys(
+                            line.split()[0]
+                            for line in resolved.output.splitlines()
+                            if line.split()
+                            and is_ip_address(line.split()[0])
+                        )
+                    )
+                if host_internal_ips:
+                    logger.info(
+                        "Container resolves host.docker.internal -> %s",
+                        host_internal_ips,
+                    )
+                else:
+                    logger.warning(
+                        "Container host.docker.internal resolution unavailable; "
+                        "using Docker gateway %s",
+                        gateway_ip,
+                    )
+
             endpoints = build_allowed_endpoints(
-                judge_url, api_urls, gateway_ip, logger,
+                judge_url,
+                api_urls,
+                gateway_ip,
+                logger,
+                host_internal_ips=host_internal_ips,
             )
             net_isolation = backend.create_network_isolation(handle, endpoints, logger)
             net_isolation.apply()

@@ -59,6 +59,23 @@ def test_allowlist_contains_judge_and_every_llm_api_endpoint(monkeypatch) -> Non
     ]
 
 
+def test_allowlist_contains_container_host_mapping_and_gateway() -> None:
+    endpoints = network_isolation.build_allowed_endpoints(
+        "http://host.docker.internal:8080",
+        ["http://host.docker.internal:19090/backend-api"],
+        "192.168.215.1",
+        Mock(),
+        host_internal_ips=["0.250.250.254"],
+    )
+
+    assert {(endpoint.ip, endpoint.port) for endpoint in endpoints} == {
+        ("192.168.215.1", 8080),
+        ("0.250.250.254", 8080),
+        ("192.168.215.1", 19090),
+        ("0.250.250.254", 19090),
+    }
+
+
 @pytest.mark.parametrize(
     "url",
     ["ftp://api.example.com/model", "https://user:secret@api.example.com"],

@@ -171,6 +171,9 @@ def test_codex_goal_plus_run_and_resume_commands() -> None:
     assert "SFORGE_AGENT_FINALIZATION_GRACE_SECONDS" in run_cmd
     assert "SFORGE_AGENT_HARD_DEADLINE" in run_cmd
     assert "After the exploration cutoff" in run_cmd
+    assert "create one Search-routed work item" in run_cmd
+    assert "exactly one result event followed by one accepted event" in run_cmd
+    assert "call goal_plus_set_status immediately" in run_cmd
     assert "edgebench-resume-sync.log" in resume_cmd
     assert '"\\$goal-plus resume"' in resume_cmd
     assert "Continue the active Goal Plus task" not in resume_cmd
@@ -237,6 +240,9 @@ def test_pi_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> None:
     assert '"min_runtime_seconds": 600' in run_cmd
     assert '"min_verifier_runs": 1' in run_cmd
     assert "reserve_closeout_seconds to 90" in run_cmd
+    assert "create one Search-routed work item" in run_cmd
+    assert "exactly one result event followed by one accepted event" in run_cmd
+    assert "accepted is valid only after result" in run_cmd
     assert '"max_turns"' not in run_cmd
     assert "sforge-goal-plus-submit --details --if-new" in resume_cmd
     assert "edgebench-resume-sync.log" in resume_cmd

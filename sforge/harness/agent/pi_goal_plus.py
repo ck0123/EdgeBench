@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from uuid import uuid4
 
 from sforge.harness.agent.goal_plus_runtime import (
     DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS,
@@ -53,7 +54,7 @@ class PiGoalPlusAgent(PiAgent):
 
     name = "pi-goal-plus"
     install_goal_plus_bridge = True
-    # Goal Plus registers its stop gate through Pi's native ``agent_end`` event
+    # Goal Plus registers its stop gate through Pi's native ``agent_settled`` event
     # in the extension loaded by run_cmd/resume_cmd.
     stop_hook = "pi-native-goal-plus"
     live_status_interval_seconds = 15.0
@@ -65,7 +66,7 @@ cp /opt/goal-plus/.pi/prompts/goal-plus.md ~/.pi/agent/prompts/goal-plus.md
 rm -rf ~/.pi/agent/skills/goal-plus
 cp -a /opt/goal-plus/.pi/skills/goal-plus ~/.pi/agent/skills/goal-plus
 test -f /opt/goal-plus/.pi/extensions/goal-plus.ts
-mkdir -p /home/agent/.goal-plus''',
+mkdir -p /home/agent/.goal-plus /home/agent/.goal-plus/pi-sessions''',
     ]
     run_cmd = (
         'export GOAL_PLUS_OUTER_DEADLINE_AT="$SFORGE_AGENT_DEADLINE"; '
@@ -73,6 +74,8 @@ mkdir -p /home/agent/.goal-plus''',
         'HARD_REMAINING=$((SFORGE_AGENT_HARD_DEADLINE - $(date +%s))); '
         'exec pi -p --mode json '
         '-e /opt/goal-plus/.pi/extensions/goal-plus.ts '
+        '--session-dir /home/agent/.goal-plus/pi-sessions '
+        '--session-id "$SFORGE_PI_GOAL_PLUS_SESSION_ID" '
         '--provider openai-codex --model "$PI_MODEL" '
         '--thinking "$SFORGE_PI_REASONING_EFFORT" '
         '"/goal-plus mode=autonomous max_parallel=__GOAL_PLUS_PARALLEL_NUM__ '
@@ -80,8 +83,10 @@ mkdir -p /home/agent/.goal-plus''',
         'strategy=agent_guided __GOAL_PLUS_ROLE_COMMAND_CONFIG__'
         '$(cat {prompt_file})\n\n'
         'Use the Goal Plus framework to perform deep search optimization for this task.\n'
-        'For the initial frozen SearchSpec, set strategy.worker_host to pi and '
-        'omit the deprecated budget.max_candidates field. The leading typed '
+        'For the initial frozen SearchSpec, set strategy.worker_host to pi. '
+        'Leave strategy.search_scheduler unset so the Goal Plus runtime injects '
+        'the current default, and omit the deprecated budget.max_candidates '
+        'field. The leading typed '
         'command config is authoritative for max_parallel (the single EdgeBench K), '
         'workspace backend, promotion mode, strategy, and role models. Set '
         'strategy.worker_budget to '
@@ -132,11 +137,14 @@ mkdir -p /home/agent/.goal-plus''',
         'SYNC_STATUS=$?; '
         'printf "%s\\n%s\\n" "$SYNC_STATUS" "$SYNC_OUTPUT" '
         f'>> {GOAL_PLUS_STATE_DIR}/edgebench-resume-sync.log; '
-        'exec pi -p --mode json -c '
+        'exec pi -p --mode json '
         '-e /opt/goal-plus/.pi/extensions/goal-plus.ts '
+        '--session-dir /home/agent/.goal-plus/pi-sessions '
+        '--session "$SFORGE_PI_GOAL_PLUS_SESSION_ID" '
         '--provider openai-codex --model "$PI_MODEL" '
         '--thinking "$SFORGE_PI_REASONING_EFFORT" '
-        '"/goal-plus resume"'
+        '"Continue the active Goal Plus task from durable state in this same Pi '
+        'session. Process pending closeout work before starting more optimization."'
     )
 
     def format_run_cmd(
@@ -286,7 +294,7 @@ mkdir -p /home/agent/.goal-plus''',
     ) -> None:
         """Report the stop gate supplied by the loaded Goal Plus Pi extension."""
         logger.info(
-            "Goal Plus stop gate is provided by the Pi extension's native agent_end hook"
+            "Goal Plus stop gate is provided by the Pi extension's native agent_settled hook"
         )
 
     def augment_env(self, env: dict[str, str], model: str | None) -> None:
@@ -296,6 +304,7 @@ mkdir -p /home/agent/.goal-plus''',
         env["GOAL_PLUS_SEARCH_ROOT"] = GOAL_PLUS_STATE_DIR
         env["GOAL_PLUS_ROLE"] = "main"
         env["GOAL_PLUS_PI_ROLE"] = "main"
+        env.setdefault("SFORGE_PI_GOAL_PLUS_SESSION_ID", str(uuid4()))
         if model:
             env["GOAL_PLUS_PI_MODEL"] = f"openai-codex/{model}"
 

@@ -162,7 +162,8 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         f'>> {GOAL_PLUS_STATE_DIR}/edgebench-resume-sync.log; '
         f'exec codex exec --disable plugins {CODEX_GOAL_PLUS_MCP_FLAGS} '
         '--json resume --last --dangerously-bypass-approvals-and-sandbox '
-        '"\\$goal-plus resume"'
+        '"Continue the active Goal Plus task from durable state in this same Codex '
+        'session. Process pending closeout work before starting more optimization."'
     )
 
     def format_run_cmd(

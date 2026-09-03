@@ -272,14 +272,20 @@ def goal_plus_should_resume_after_exit(
         payload = goal_plus_status_snapshot(backend, handle)
     except Exception as exc:
         logger.warning("Goal Plus terminal-state resume probe failed: %s", exc)
-        return True
+        return False
     if payload.get("terminal_ready") is True:
         logger.info(
             "Goal Plus records are terminal and final reports exist; "
             "native auto-resume is not needed"
         )
         return False
-    return True
+    if payload.get("native_continuation_ready") is True:
+        return True
+    logger.warning(
+        "Goal Plus native auto-resume is not safe: %s",
+        payload.get("native_continuation_blockers") or "no unfinished attached session",
+    )
+    return False
 
 
 def collect_goal_plus_artifacts(

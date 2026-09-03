@@ -52,17 +52,30 @@ def build_snapshot(root: Path) -> dict[str, Any]:
                 _runtime_file_exists(task.get(key), root)
                 for key in ("report_path", "html_report_path")
             )
-        goal_statuses.append(
+        active_session = payload.get("active_session")
+        compact_session = (
             {
-                key: payload.get(key)
-                for key in ("goal_plus_id", "status", "phase", "updated_at")
-                if payload.get(key) is not None
+                key: active_session.get(key)
+                for key in ("host", "session_id", "state")
+                if active_session.get(key) is not None
             }
+            if isinstance(active_session, dict)
+            else None
         )
+        compact_status = {
+            key: payload.get(key)
+            for key in ("goal_plus_id", "status", "phase", "updated_at")
+            if payload.get(key) is not None
+        }
+        if compact_session:
+            compact_status["active_session"] = compact_session
+        goal_statuses.append(compact_status)
         terminal_records.append(
             {
+                "goal_plus_id": str(payload.get("goal_plus_id") or path.parent.name),
                 "status": str(payload.get("status") or "active"),
                 "reports_ready": reports_ready,
+                "active_session": compact_session,
             }
         )
 
@@ -219,6 +232,28 @@ def build_snapshot(root: Path) -> dict[str, Any]:
         record["status"] in terminal and record["reports_ready"]
         for record in terminal_records
     )
+    unfinished_records = [
+        record for record in terminal_records if record["status"] not in terminal
+    ]
+    continuation_blockers = [
+        {
+            "goal_plus_id": record["goal_plus_id"],
+            "reason": (
+                "goal_needs_user"
+                if record["status"] == "needs_user"
+                else "missing_attached_native_session"
+                if not isinstance(record["active_session"], dict)
+                or not record["active_session"].get("session_id")
+                else f"native_session_{record['active_session'].get('state', 'unknown')}"
+            ),
+        }
+        for record in unfinished_records
+        if record["status"] == "needs_user"
+        or not isinstance(record["active_session"], dict)
+        or record["active_session"].get("state") != "attached"
+        or not record["active_session"].get("session_id")
+    ]
+    continuation_ready = bool(unfinished_records) and not continuation_blockers
     annotation_monitors.sort(
         key=lambda item: (
             str(item.get("updated_at") or ""),
@@ -272,6 +307,8 @@ def build_snapshot(root: Path) -> dict[str, Any]:
         },
         "goal_statuses": goal_statuses,
         "terminal_ready": ready,
+        "native_continuation_ready": continuation_ready,
+        "native_continuation_blockers": continuation_blockers,
     }
 
 

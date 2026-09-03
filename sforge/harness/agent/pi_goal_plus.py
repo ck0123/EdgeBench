@@ -54,7 +54,7 @@ class PiGoalPlusAgent(PiAgent):
 
     name = "pi-goal-plus"
     install_goal_plus_bridge = True
-    # Goal Plus registers its stop gate through Pi's native ``agent_settled`` event
+    # Goal Plus queues stop-gate continuations through Pi's native ``agent_end`` event
     # in the extension loaded by run_cmd/resume_cmd.
     stop_hook = "pi-native-goal-plus"
     live_status_interval_seconds = 15.0
@@ -294,7 +294,7 @@ mkdir -p /home/agent/.goal-plus /home/agent/.goal-plus/pi-sessions''',
     ) -> None:
         """Report the stop gate supplied by the loaded Goal Plus Pi extension."""
         logger.info(
-            "Goal Plus stop gate is provided by the Pi extension's native agent_settled hook"
+            "Goal Plus stop gate is provided by the Pi extension's native agent_end hook"
         )
 
     def augment_env(self, env: dict[str, str], model: str | None) -> None:

@@ -169,7 +169,7 @@ def archive_best(
     artifact_hash = best.get("artifact_hash")
     workspace_value = best.get("workspace")
     if (
-        best.get("schema_version") != 1
+        best.get("schema_version") not in {1, 2}
         or best.get("run_id") != run.get("run_id")
         or not isinstance(candidate_id, str)
         or not isinstance(iteration_number, int)

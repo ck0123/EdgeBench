@@ -148,7 +148,10 @@ def test_sync_promotion_rejects_different_source_workspace(tmp_path: Path) -> No
         )
 
 
-def test_archive_best_uses_exact_verified_commit(tmp_path: Path) -> None:
+@pytest.mark.parametrize("schema_version", [1, 2])
+def test_archive_best_uses_exact_verified_commit(
+    tmp_path: Path, schema_version: int
+) -> None:
     root = tmp_path / ".goal-plus"
     run_dir = root / "runs" / "run_1"
     workspace = run_dir / "workspace" / "c001"
@@ -189,26 +192,30 @@ def test_archive_best_uses_exact_verified_commit(tmp_path: Path) -> None:
             "best_score": 9.0,
         },
     )
-    _write_json(
-        run_dir / "best.json",
-        {
-            "schema_version": 1,
-            "run_id": "run_1",
-            "candidate_id": "c001",
-            "iteration": 1,
-            "commit": best_commit,
-            "score": 9.0,
-            "metric_name": "combined_score",
-            "metric_direction": "maximize",
-            "artifact_hash": "artifact-1",
-            "workspace": "workspace/c001",
-            "changed_files": [
-                "outputs/figures/summary.txt",
-                "outputs/report.md",
-            ],
-            "updated_at": "2026-08-10T10:01:00Z",
-        },
-    )
+    best = {
+        "schema_version": schema_version,
+        "run_id": "run_1",
+        "candidate_id": "c001",
+        "iteration": 1,
+        "commit": best_commit,
+        "score": 9.0,
+        "metric_name": "combined_score",
+        "metric_direction": "maximize",
+        "artifact_hash": "artifact-1",
+        "workspace": "workspace/c001",
+        "changed_files": [
+            "outputs/figures/summary.txt",
+            "outputs/report.md",
+        ],
+        "updated_at": "2026-08-10T10:01:00Z",
+    }
+    if schema_version == 2:
+        best["artifact_ref"] = {
+            "kind": "git_commit",
+            "id": best_commit,
+            "provider": "git_worktree",
+        }
+    _write_json(run_dir / "best.json", best)
     _write_json(
         run_dir / "candidates" / "c001" / "candidate.json",
         {

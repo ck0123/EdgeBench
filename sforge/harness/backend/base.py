@@ -212,6 +212,7 @@ class ContainerBackend(abc.ABC):
         log_append: bool = False,
         on_chunk: Callable[[bytes], None] | None = None,
         output_log_filter: StreamingLogFilter | None = None,
+        before_timeout: Callable[[], None] | None = None,
     ) -> StreamingExecResult:
         ...
 

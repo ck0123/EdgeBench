@@ -40,6 +40,8 @@ from sforge.harness.agent.goal_plus_runtime import (
     collect_goal_plus_artifacts,
     goal_plus_model_token,
     goal_plus_should_resume_after_exit,
+    GOAL_PLUS_RESUME_ENV,
+    goal_plus_prepare_timeout_resume,
     goal_plus_runtime_install_cmds,
     nonnegative_int_extra_env,
     positive_int_extra_env,
@@ -51,6 +53,11 @@ from sforge.harness.backend import ContainerBackend, ContainerHandle
 
 class PiGoalPlusAgent(PiAgent):
     """Run the normal EdgeBench prompt through Pi's ``/goal-plus`` entrypoint."""
+
+    controlled_finalization = True
+
+    def prepare_timeout_resume(self, backend, handle, logger) -> bool:
+        return goal_plus_prepare_timeout_resume(backend, handle, logger)
 
     name = "pi-goal-plus"
     install_goal_plus_bridge = True
@@ -132,6 +139,7 @@ mkdir -p /home/agent/.goal-plus /home/agent/.goal-plus/pi-sessions''',
         'needed."'
     )
     resume_cmd = (
+        GOAL_PLUS_RESUME_ENV +
         'export GOAL_PLUS_OUTER_DEADLINE_AT="$SFORGE_AGENT_DEADLINE"; '
         'SYNC_OUTPUT=$(sforge-goal-plus-submit --details --if-new 2>&1); '
         'SYNC_STATUS=$?; '
@@ -143,8 +151,7 @@ mkdir -p /home/agent/.goal-plus /home/agent/.goal-plus/pi-sessions''',
         '--session "$SFORGE_PI_GOAL_PLUS_SESSION_ID" '
         '--provider openai-codex --model "$PI_MODEL" '
         '--thinking "$SFORGE_PI_REASONING_EFFORT" '
-        '"Continue the active Goal Plus task from durable state in this same Pi '
-        'session. Process pending closeout work before starting more optimization."'
+        "'/goal-plus resume'"
     )
 
     def format_run_cmd(

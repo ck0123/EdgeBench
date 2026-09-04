@@ -34,6 +34,8 @@ from sforge.harness.agent.goal_plus_runtime import (
     collect_goal_plus_artifacts,
     goal_plus_model_token,
     goal_plus_should_resume_after_exit,
+    GOAL_PLUS_RESUME_ENV,
+    goal_plus_prepare_timeout_resume,
     goal_plus_runtime_install_cmds,
     nonnegative_int_extra_env,
     positive_int_extra_env,
@@ -57,6 +59,11 @@ CODEX_GOAL_PLUS_MCP_FLAGS = " ".join(
 
 class CodexGoalPlusAgent(CodexAgent):
     """Run Goal Plus through Codex's exact host command and project hooks."""
+
+    controlled_finalization = True
+
+    def prepare_timeout_resume(self, backend, handle, logger) -> bool:
+        return goal_plus_prepare_timeout_resume(backend, handle, logger)
 
     name = "codex-goal-plus"
     install_goal_plus_bridge = True
@@ -153,6 +160,7 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         'returned Judge result when deciding whether another search task is needed."'
     )
     resume_cmd = (
+        GOAL_PLUS_RESUME_ENV +
         'export GOAL_PLUS_OUTER_DEADLINE_AT="$SFORGE_AGENT_DEADLINE"; '
         'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
         'HARD_REMAINING=$((SFORGE_AGENT_HARD_DEADLINE - $(date +%s))); '
@@ -161,9 +169,8 @@ grep -F 'args = ["--root", "{GOAL_PLUS_STATE_DIR}"]' "$CODEX_DIR/config.toml"'''
         'printf "%s\\n%s\\n" "$SYNC_STATUS" "$SYNC_OUTPUT" '
         f'>> {GOAL_PLUS_STATE_DIR}/edgebench-resume-sync.log; '
         f'exec codex exec --disable plugins {CODEX_GOAL_PLUS_MCP_FLAGS} '
-        '--json resume --last --dangerously-bypass-approvals-and-sandbox '
-        '"Continue the active Goal Plus task from durable state in this same Codex '
-        'session. Process pending closeout work before starting more optimization."'
+        '--json resume --dangerously-bypass-approvals-and-sandbox '
+        '"$SFORGE_GOAL_PLUS_RESUME_SESSION_ID" \'$goal-plus resume\''
     )
 
     def format_run_cmd(

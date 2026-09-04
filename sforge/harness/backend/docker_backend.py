@@ -290,6 +290,7 @@ class DockerBackend(ContainerBackend):
         log_append: bool = False,
         on_chunk: Callable[[bytes], None] | None = None,
         output_log_filter: StreamingLogFilter | None = None,
+        before_timeout: Callable[[], None] | None = None,
     ) -> StreamingExecResult:
         result = self._exec_run_impl(
             handle, cmd, timeout,
@@ -297,6 +298,7 @@ class DockerBackend(ContainerBackend):
             environment=environment, stream_to_stdout=stream_to_stdout,
             shutdown_event=shutdown_event, log_append=log_append,
             on_chunk=on_chunk, output_log_filter=output_log_filter,
+            before_timeout=before_timeout,
         )
         return StreamingExecResult(
             output=result[0], exit_code=result[1],
@@ -337,6 +339,7 @@ class DockerBackend(ContainerBackend):
         log_append: bool = False,
         on_chunk: Callable[[bytes], None] | None = None,
         output_log_filter: StreamingLogFilter | None = None,
+        before_timeout: Callable[[], None] | None = None,
     ) -> tuple[str, int, bool, float]:
         container = self._raw(handle)
         output_capture = StreamingOutputCapture(
@@ -416,9 +419,12 @@ class DockerBackend(ContainerBackend):
             raise exception
 
         if thread.is_alive():
-            if exec_id is not None:
+            if before_timeout and not (shutdown_event and shutdown_event.is_set()):
+                before_timeout()
+            if thread.is_alive() and exec_id is not None:
                 exec_pid = container.client.api.exec_inspect(exec_id)["Pid"]
-                container.exec_run(["/bin/sh", "-c", f"kill -TERM {exec_pid}"], detach=True)
+                if isinstance(exec_pid, int) and exec_pid > 1:
+                    container.exec_run(["/bin/sh", "-c", f"kill -TERM {exec_pid}"], detach=True)
             timed_out = True
             exit_code = -1
         else:

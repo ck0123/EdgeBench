@@ -68,18 +68,9 @@ class CodexGoalPlusSoloAgent(CodexGoalPlusAgent):
         'sforge-goal-plus-submit --details, and only after search_promote. Require '
         'a successful Judge response before recording completion."'
     )
-    resume_cmd = (
-        'export GOAL_PLUS_OUTER_DEADLINE_AT="$SFORGE_AGENT_DEADLINE"; '
-        'REMAINING=$((SFORGE_AGENT_DEADLINE - $(date +%s))); '
-        'SYNC_OUTPUT=$(sforge-goal-plus-submit --details --if-new 2>&1); '
-        'SYNC_STATUS=$?; '
-        'printf "%s\\n%s\\n" "$SYNC_STATUS" "$SYNC_OUTPUT" '
-        '>> /home/agent/.goal-plus/edgebench-resume-sync.log; '
-        f'exec codex exec --disable plugins {CODEX_GOAL_PLUS_MCP_FLAGS} '
-        '--json resume --last --dangerously-bypass-approvals-and-sandbox '
-        '"Continue the active Goal Plus task from durable state in this same Codex '
-        'session. Process pending closeout work before starting more optimization."'
-    )
+    # Resume preserves this experiment's original objective and worker policy.
+    # Reuse the same guarded session/Goal Plus resume contract as the base agent.
+    resume_cmd = CodexGoalPlusAgent.resume_cmd
 
     def format_run_cmd(
         self,

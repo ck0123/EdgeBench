@@ -166,7 +166,9 @@ def test_codex_goal_plus_run_and_resume_commands() -> None:
     assert "sforge-goal-plus-submit --details" in run_cmd
     assert "sforge-goal-plus-submit --details --if-new" in resume_cmd
     assert "--model gpt-5.5 --disable plugins" in resume_cmd
-    assert "--json resume --last" in resume_cmd
+    assert "--json resume" in resume_cmd
+    assert "SFORGE_GOAL_PLUS_RESUME_SESSION_ID" in resume_cmd
+    assert "'$goal-plus resume'" in resume_cmd
     assert "--json" in resume_cmd
     assert "SFORGE_AGENT_FINALIZATION_GRACE_SECONDS" in run_cmd
     assert "SFORGE_AGENT_HARD_DEADLINE" in run_cmd
@@ -176,7 +178,7 @@ def test_codex_goal_plus_run_and_resume_commands() -> None:
     assert "call goal_plus_set_status immediately" in run_cmd
     assert "edgebench-resume-sync.log" in resume_cmd
     assert '"\\$goal-plus resume"' not in resume_cmd
-    assert "Continue the active Goal Plus task" in resume_cmd
+    assert "GOAL_PLUS_RESUME_EXPECTATION" in resume_cmd
     assert "$SYNC_STATUS" in resume_cmd
     assert "${{SYNC_STATUS}}" not in resume_cmd
     assert (
@@ -204,7 +206,7 @@ def test_codex_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> No
     assert "workers=gpt-5.5*5" in run_cmd
     assert '"max_runtime_seconds": 900' in run_cmd
     assert '"\\$goal-plus resume"' not in resume_cmd
-    assert "Continue the active Goal Plus task" in resume_cmd
+    assert "'$goal-plus resume'" in resume_cmd
     assert "budget.max_parallel to 5" not in resume_cmd
     assert '"max_runtime_seconds": 900' not in resume_cmd
     assert agent.get_finalization_grace_seconds() == 180
@@ -253,7 +255,7 @@ def test_pi_goal_plus_accepts_experiment_concurrency_and_worker_lease() -> None:
     assert '--session-id "$SFORGE_PI_GOAL_PLUS_SESSION_ID"' in run_cmd
     assert '--session "$SFORGE_PI_GOAL_PLUS_SESSION_ID"' in resume_cmd
     assert "--goal-plus-headless-continue" not in resume_cmd
-    assert "Continue the active Goal Plus task" in resume_cmd
+    assert "'/goal-plus resume'" in resume_cmd
     assert "Continue working" not in resume_cmd
     assert "budget.max_parallel to 4" not in resume_cmd
     assert '"max_runtime_seconds": 720' not in resume_cmd
@@ -292,7 +294,7 @@ def test_goal_plus_hosts_resume_only_with_attached_native_session() -> None:
                     '{"terminal_ready": true, "native_continuation_ready": false, "goal_statuses": '
                     '[{"status": "complete"}]}'
                     if self.ready
-                    else '{"terminal_ready": false, "native_continuation_ready": true, "goal_statuses": '
+                    else '{"terminal_ready": false, "native_continuation_ready": true, "resume_expectation": {"goal_plus_id":"gp_0001","goal_revision":1,"session_id":"main","control_version":2}, "goal_statuses": '
                     '[{"status": "active"}]}'
                 )
             )
@@ -487,6 +489,8 @@ def test_goal_plus_status_probe_requires_attached_native_session(tmp_path) -> No
         "goal_plus_id": "gp_0001",
         "status": "active",
         "phase": "goal",
+        "goal_revision": 1,
+        "control": {"state": "paused", "reason": "execution_lost", "version": 2},
         "active_session": {
             "host": "pi-rpc",
             "session_id": "019fd094-8fcd-7c3e-aa57-52b8179c2539",
@@ -497,10 +501,25 @@ def test_goal_plus_status_probe_requires_attached_native_session(tmp_path) -> No
 
     attached = build_snapshot(tmp_path / ".goal-plus")
     assert attached["native_continuation_ready"] is True
+    assert attached["resume_expectation"]["control_version"] == 2
     assert attached["native_continuation_blockers"] == []
     assert attached["goal_statuses"][0]["active_session"]["session_id"] == (
         "019fd094-8fcd-7c3e-aa57-52b8179c2539"
     )
+
+    original_control = dict(payload["control"])
+    for control in (
+        None, {}, {"state": "active", "version": 2},
+        {"state": "paused", "reason": "legacy_pause", "version": 2},
+        {"state": "paused", "reason": "user_pause", "version": 2},
+        {"state": "paused", "reason": "user_interrupt", "version": 2},
+        {"state": "paused", "reason": "execution_lost"},
+        {"state": "closed", "reason": "user_clear", "version": 2},
+    ):
+        payload["control"] = control
+        goal_path.write_text(json.dumps(payload), encoding="utf-8")
+        assert build_snapshot(tmp_path / ".goal-plus")["native_continuation_ready"] is False
+    payload["control"] = original_control
 
     for state in ("paused", "detached", "stale"):
         payload["active_session"]["state"] = state
@@ -516,7 +535,7 @@ def test_goal_plus_status_probe_requires_attached_native_session(tmp_path) -> No
     goal_path.write_text(json.dumps(payload), encoding="utf-8")
     snapshot = build_snapshot(tmp_path / ".goal-plus")
     assert snapshot["native_continuation_ready"] is False
-    assert snapshot["native_continuation_blockers"][0]["reason"] == "goal_needs_user"
+    assert snapshot["native_continuation_blockers"][0]["reason"] == "goal_not_active"
 
     payload["status"] = "active"
     for session in ({"state": "attached"}, None):
@@ -571,7 +590,7 @@ def test_codex_goal_plus_solo_enforces_one_long_lived_worker() -> None:
     assert "Do not set max_turns" in run_cmd
     assert "--disable plugins" in resume_cmd
     assert '"\\$goal-plus resume"' not in resume_cmd
-    assert "Continue the active Goal Plus task" in resume_cmd
+    assert "'$goal-plus resume'" in resume_cmd
 
 
 def test_codex_goal_plus_sets_shared_state_environment() -> None:

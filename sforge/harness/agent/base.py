@@ -46,6 +46,7 @@ class Agent(abc.ABC):
     default_model: str | None = None
     timeout: int = 3600
     segment_timeout: int | None = None
+    controlled_finalization: bool = False
     stop_hook: str | None = None
     resume_cmd: str | None = None
     live_status_interval_seconds: float = 0.0
@@ -109,6 +110,10 @@ class Agent(abc.ABC):
         """Return whether a normally exited native session should be resumed."""
 
         return True
+
+    def prepare_timeout_resume(self, backend: ContainerBackend, handle: ContainerHandle, logger: logging.Logger) -> bool:
+        """Optional host-owned timeout admission, before ending the segment."""
+        return False
 
     def format_run_cmd(
         self,

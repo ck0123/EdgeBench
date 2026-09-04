@@ -996,11 +996,32 @@ def run_agent(
         on_chunk_cb = None
 
         while remaining_timeout > 0:
+            remaining_timeout = min(remaining_timeout, max(0.0, hard_deadline_at - time.time()))
+            if remaining_timeout <= 0:
+                break
             is_resume = resume_count > 0
             segment_timeout = min(
                 remaining_timeout,
                 float(agent.segment_timeout or remaining_timeout),
             )
+            controlled_cutoff = bool(
+                getattr(agent, "controlled_finalization", False) and finalization_grace_seconds
+                and deadline_at - time.time() > 1
+            )
+            if controlled_cutoff:
+                segment_timeout = min(segment_timeout, deadline_at - time.time())
+            timeout_resume_ready = False
+
+            def before_owned_timeout() -> None:
+                nonlocal timeout_resume_ready
+                if not controlled_cutoff or not can_resume or (shutdown_event and shutdown_event.is_set()):
+                    return
+                try:
+                    timeout_resume_ready = agent.prepare_timeout_resume(backend, handle, logger)
+                except Exception as exc:
+                    logger.warning("Owned timeout admission failed; preserving stopped task: %s", exc)
+
+            timeout_options = {"before_timeout": before_owned_timeout} if controlled_cutoff else {}
             run_cmd = agent.format_run_cmd(
                 prompt_path, model=model,
                 internet=internet, resume=is_resume,
@@ -1029,6 +1050,7 @@ def run_agent(
                 log_append=is_resume,
                 on_chunk=on_chunk_cb,
                 output_log_filter=agent.create_output_log_filter(),
+                **timeout_options,
             )
             output_capture.append(seg_result.output.encode(errors="replace"))
             total_runtime += seg_result.elapsed_seconds
@@ -1042,8 +1064,13 @@ def run_agent(
             )
 
             if seg_result.timed_out:
+                if timeout_resume_ready and remaining_timeout > 1 and resume_count < MAX_RESUMES and not (shutdown_event and shutdown_event.is_set()):
+                    resume_count += 1
+                    logger.info("Exploration stopped by the controller; resuming the same Main for finalization only")
+                    continue
                 if (
                     can_resume
+                    and not getattr(agent, "controlled_finalization", False)
                     and agent.segment_timeout is not None
                     and not (shutdown_event is not None and shutdown_event.is_set())
                     and remaining_timeout > 1
@@ -1082,10 +1109,10 @@ def run_agent(
                 )
             except Exception as exc:
                 logger.warning(
-                    "Agent completion probe failed; preserving auto-resume: %s",
+                    "Agent completion probe failed; applying host recovery policy: %s",
                     exc,
                 )
-                should_resume = True
+                should_resume = not getattr(agent, "controlled_finalization", False)
             if not should_resume:
                 break
             if seg_result.elapsed_seconds < MIN_RUNTIME_FOR_RESUME:

@@ -49,6 +49,15 @@ DEFAULT_GOAL_PLUS_CLOSEOUT_RESERVE_SECONDS = 0
 DEFAULT_GOAL_PLUS_FINALIZATION_GRACE_SECONDS = 300
 GOAL_PLUS_LIVE_STATUS_FILENAME = "goal-plus-live-status.json"
 GOAL_PLUS_STATUS_PROBE_CONTAINER_PATH = "/opt/sforge-goal-plus-status.py"
+GOAL_PLUS_RESUME_EXPECTATION_PATH = f"{GOAL_PLUS_STATE_DIR}/resume-expectation.json"
+# Preserve the admission snapshot; the actual host command rechecks it atomically.
+GOAL_PLUS_RESUME_ENV = (
+    'export GOAL_PLUS_RESUME_EXPECTATION="$(python -c \'from pathlib import Path; '
+    f'print(Path("{GOAL_PLUS_RESUME_EXPECTATION_PATH}").read_text())\')"; '
+    'test -n "$GOAL_PLUS_RESUME_EXPECTATION" || exit 1; '
+    'export SFORGE_GOAL_PLUS_RESUME_SESSION_ID="$(python -c \'import json, os; '
+    'print(json.loads(os.environ["GOAL_PLUS_RESUME_EXPECTATION"])["session_id"])\')"; '
+)
 GOAL_PLUS_MODEL_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/-]*\Z")
 
 
@@ -266,7 +275,11 @@ def goal_plus_should_resume_after_exit(
     handle: ContainerHandle,
     logger: logging.Logger,
 ) -> bool:
-    """Resume only while Goal Plus still has unfinished durable work."""
+    """Retry only a trusted host-recorded execution loss in this owned container.
+
+    An unfinished task or an unknown exit is not automatic resume authority.
+    User pause/interrupt, needs_user, terminal and identity mismatch fail closed.
+    """
 
     try:
         payload = goal_plus_status_snapshot(backend, handle)
@@ -279,13 +292,42 @@ def goal_plus_should_resume_after_exit(
             "native auto-resume is not needed"
         )
         return False
-    if payload.get("native_continuation_ready") is True:
-        return True
+    expectation = payload.get("resume_expectation")
+    if payload.get("native_continuation_ready") is True and isinstance(expectation, dict):
+        result = backend.exec_run(handle, [
+            "python", "-c",
+            "import pathlib,sys; p=pathlib.Path(sys.argv[1]); "
+            "t=p.with_suffix('.tmp'); t.write_text(sys.argv[2]); t.replace(p)",
+            GOAL_PLUS_RESUME_EXPECTATION_PATH, json.dumps(expectation, sort_keys=True),
+        ])
+        return result.exit_code == 0
     logger.warning(
         "Goal Plus native auto-resume is not safe: %s",
         payload.get("native_continuation_blockers") or "no unfinished attached session",
     )
     return False
+
+
+def goal_plus_prepare_timeout_resume(backend: ContainerBackend, handle: ContainerHandle, logger: logging.Logger) -> bool:
+    """Record a known owned stop before terminating Main, never after user abort."""
+    program = (
+        "import json; from pathlib import Path; "
+        "from goal_plus.goal_plus import FileGoalPlusRuntime; "
+        "from goal_plus.host_recovery import interrupt_main_for_retry; "
+        f"root=Path({GOAL_PLUS_STATE_DIR!r}); runtime=FileGoalPlusRuntime(root); "
+        "records=[runtime.status(p.parent.name) for p in (root/'goal-plus').glob('gp_*/goal.json')]; "
+        "records=[r for r in records if not runtime.is_terminal(r)]; "
+        "assert len(records)==1, 'ambiguous Goal'; r=records[0]; "
+        "expected=dict(goal_plus_id=r.goal_plus_id,goal_revision=r.goal_revision,"
+        "session_id=r.active_session.session_id,control_version=r.control.version); "
+        "ticket=interrupt_main_for_retry(root,r.goal_plus_id,expected); "
+        f"p=Path({GOAL_PLUS_RESUME_EXPECTATION_PATH!r}); t=p.with_suffix('.tmp'); "
+        "t.write_text(json.dumps(ticket)); t.replace(p)"
+    )
+    result = backend.exec_run(handle, ["python", "-c", program])
+    if result.exit_code != 0:
+        logger.warning("Goal Plus owned timeout admission rejected; no automatic resume")
+    return result.exit_code == 0
 
 
 def collect_goal_plus_artifacts(

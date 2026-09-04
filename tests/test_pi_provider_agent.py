@@ -142,7 +142,7 @@ def test_goal_plus_provider_uses_selected_model_for_outer_and_workers(
     assert '"/goal-plus resume"' not in resume_command
     assert '--session "$SFORGE_PI_GOAL_PLUS_SESSION_ID"' in resume_command
     assert "--goal-plus-headless-continue" not in resume_command
-    assert "Continue the active Goal Plus task" in resume_command
+    assert "'/goal-plus resume'" in resume_command
     assert "Continue working" not in resume_command
     assert env["PI_PROVIDER"] == "glm-proxy"
     assert env["PI_MODEL"] == "GLM-5.2"

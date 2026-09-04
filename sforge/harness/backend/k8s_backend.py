@@ -510,6 +510,7 @@ class K8sBackend(ContainerBackend):
         log_append: bool = False,
         on_chunk: Callable[[bytes], None] | None = None,
         output_log_filter: StreamingLogFilter | None = None,
+        before_timeout: Callable[[], None] | None = None,
     ) -> StreamingExecResult:
         output, exit_code, timed_out, elapsed = self._exec_streaming(
             handle, cmd, timeout,
@@ -517,6 +518,7 @@ class K8sBackend(ContainerBackend):
             environment=environment, stream_to_stdout=stream_to_stdout,
             shutdown_event=shutdown_event, log_append=log_append,
             on_chunk=on_chunk, output_log_filter=output_log_filter,
+            before_timeout=before_timeout,
         )
         return StreamingExecResult(
             output=output, exit_code=exit_code,
@@ -557,6 +559,7 @@ class K8sBackend(ContainerBackend):
         log_append: bool = False,
         on_chunk: Callable[[bytes], None] | None = None,
         output_log_filter: StreamingLogFilter | None = None,
+        before_timeout: Callable[[], None] | None = None,
     ) -> tuple[str, int, bool, float]:
         h = self._handle(handle)
         shell_cmd = self._build_shell_cmd(cmd, user=user, workdir=workdir, environment=environment)
@@ -643,6 +646,8 @@ class K8sBackend(ContainerBackend):
 
         if thread.is_alive():
             timed_out = True
+            if before_timeout and not (shutdown_event and shutdown_event.is_set()):
+                before_timeout()
             # Kill the kubectl exec process
             if proc_ref:
                 try:

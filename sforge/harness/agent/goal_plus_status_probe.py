@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -38,7 +39,7 @@ def _runtime_file_exists(value: object, root: Path) -> bool:
 
 def build_snapshot(root: Path) -> dict[str, Any]:
     goal_statuses: list[dict[str, Any]] = []
-    terminal = {"complete", "blocked", "abandoned"}
+    terminal = {"complete", "abandoned"}
     terminal_records: list[dict[str, Any]] = []
     for path in sorted((root / "goal-plus").glob("*/goal.json")):
         payload = _load(path)
@@ -64,7 +65,7 @@ def build_snapshot(root: Path) -> dict[str, Any]:
         )
         compact_status = {
             key: payload.get(key)
-            for key in ("goal_plus_id", "status", "phase", "updated_at")
+            for key in ("goal_plus_id", "goal_revision", "status", "phase", "updated_at", "control")
             if payload.get(key) is not None
         }
         if compact_session:
@@ -76,12 +77,15 @@ def build_snapshot(root: Path) -> dict[str, Any]:
                 "status": str(payload.get("status") or "active"),
                 "reports_ready": reports_ready,
                 "active_session": compact_session,
+                "goal_revision": payload.get("goal_revision"),
+                "control": payload.get("control"),
             }
         )
 
     candidate_keys: set[tuple[str, str]] = set()
     candidate_ids: set[str] = set()
     worker_sessions: list[dict[str, Any]] = []
+    confirmed_launches: dict[str, int] = {}
     bound_worker_handles: list[dict[str, Any]] = []
     verifier_ledger: list[dict[str, Any]] = []
     verifier_candidate_ids: set[str] = set()
@@ -210,6 +214,7 @@ def build_snapshot(root: Path) -> dict[str, Any]:
                         "run_id": session.get("run_id") or run_id,
                         "candidate_id": session.get("candidate_id"),
                         "host": session.get("host"),
+                        "execution_generation": session.get("execution_generation", 0),
                         "verifier_runs": verifier_runs,
                         "updated_at": session.get("updated_at"),
                     }.items()
@@ -217,6 +222,8 @@ def build_snapshot(root: Path) -> dict[str, Any]:
                 }
             )
             handle = session.get("host_handle")
+            if verifier_runs or isinstance(handle, dict) and (handle.get("metadata") or {}).get("bound_at"):
+                confirmed_launches[session_id] = int(session.get("execution_generation") or 0)
             if isinstance(handle, dict):
                 compact = {
                     key: handle.get(key)
@@ -229,18 +236,22 @@ def build_snapshot(root: Path) -> dict[str, Any]:
                     )
 
     ready = bool(terminal_records) and all(
-        record["status"] in terminal and record["reports_ready"]
+        (record["status"] in terminal or (record.get("control") or {}).get("state") == "closed"
+         or record["status"] == "blocked" and record.get("control") is None) and record["reports_ready"]
         for record in terminal_records
     )
     unfinished_records = [
         record for record in terminal_records if record["status"] not in terminal
+        and (record.get("control") or {}).get("state") != "closed"
     ]
     continuation_blockers = [
         {
             "goal_plus_id": record["goal_plus_id"],
             "reason": (
-                "goal_needs_user"
-                if record["status"] == "needs_user"
+                "goal_not_active"
+                if record["status"] != "active"
+                else "stop_not_controller_retryable"
+                if (record.get("control") or {}).get("reason") not in {"execution_lost", "harness_interruption"}
                 else "missing_attached_native_session"
                 if not isinstance(record["active_session"], dict)
                 or not record["active_session"].get("session_id")
@@ -248,12 +259,56 @@ def build_snapshot(root: Path) -> dict[str, Any]:
             ),
         }
         for record in unfinished_records
-        if record["status"] == "needs_user"
+        if record["status"] != "active"
+        or (record.get("control") or {}).get("state") != "paused"
+        or (record.get("control") or {}).get("reason") not in {"execution_lost", "harness_interruption"}
+        or not isinstance(record.get("goal_revision"), int)
+        or not isinstance((record.get("control") or {}).get("version"), int)
+        or (record.get("control") or {}).get("version", -1) < 0
         or not isinstance(record["active_session"], dict)
         or record["active_session"].get("state") != "attached"
         or not record["active_session"].get("session_id")
     ]
-    continuation_ready = bool(unfinished_records) and not continuation_blockers
+    continuation_ready = len(unfinished_records) == 1 and not continuation_blockers
+    resume_expectation = None
+    if continuation_ready:
+        record = unfinished_records[0]
+        resume_expectation = {
+            "goal_plus_id": record["goal_plus_id"], "goal_revision": record["goal_revision"],
+            "session_id": record["active_session"]["session_id"],
+            "control_version": record["control"]["version"],
+        }
+    # Pi's host-owned job records describe actual launch intervals, not merely
+    # allocated Goal Plus sessions. Missing process evidence stays unknown.
+    pi_live = 0
+    pi_live_known = True
+    pi_jobs = list((root / "host-pools/pi").glob("*/jobs/*/job.json"))
+    generations = {s["agent_session_id"]: s["execution_generation"] for s in worker_sessions}
+    for path in pi_jobs:
+        job = _load(path)
+        if not job:
+            pi_live_known = False
+            continue
+        sid = job.get("agent_session_id")
+        if job.get("started_at") and sid in generations:
+            confirmed_launches[sid] = generations[sid]
+        if job.get("status") not in {"starting", "running"}:
+            continue
+        pid = job.get("pid")
+        if not isinstance(pid, int) or pid <= 1:
+            pi_live_known = False
+            continue
+        try:
+            process = subprocess.run(["ps", "-p", str(pid), "-o", "stat="], capture_output=True, text=True, timeout=2)
+            if process.returncode == 0 and process.stdout.strip() and not process.stdout.strip().startswith("Z"):
+                pi_live += 1
+            elif process.returncode not in {0, 1}:
+                pi_live_known = False
+        except (OSError, subprocess.TimeoutExpired):
+            pi_live_known = False
+    generation_counts: dict[str, int] = {}
+    for generation in confirmed_launches.values():
+        generation_counts[str(generation)] = generation_counts.get(str(generation), 0) + 1
     annotation_monitors.sort(
         key=lambda item: (
             str(item.get("updated_at") or ""),
@@ -278,6 +333,9 @@ def build_snapshot(root: Path) -> dict[str, Any]:
         "candidate_count": len(candidate_keys),
         "worker_sessions": worker_sessions,
         "agent_session_count": len(worker_sessions),
+        "confirmed_worker_launch_count": len(confirmed_launches),
+        "worker_launches_by_generation": generation_counts,
+        "pi_live_worker_count": pi_live if pi_jobs and pi_live_known else None,
         "bound_worker_handles": bound_worker_handles,
         "actual_worker_launch_count": len(
             {
@@ -308,6 +366,7 @@ def build_snapshot(root: Path) -> dict[str, Any]:
         "goal_statuses": goal_statuses,
         "terminal_ready": ready,
         "native_continuation_ready": continuation_ready,
+        "resume_expectation": resume_expectation,
         "native_continuation_blockers": continuation_blockers,
     }
 
